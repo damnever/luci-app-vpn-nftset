@@ -64,6 +64,8 @@ define Package/luci-app-vpn-ipset/install
 	$(INSTALL_DATA) ./files/root/etc/config/vpn-ipset $(1)/etc/config/vpn-ipset
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/root/etc/init.d/vpn-ipset $(1)/etc/init.d/vpn-ipset
+	$(INSTALL_DIR) $(1)/etc/hotplug.d/iface
+	$(INSTALL_BIN) ./files/root/etc/hotplug.d/iface/vpn-ipset $(1)/etc/hotplug.d/iface/vpn-ipset
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./files/root/etc/uci-defaults/luci-vpn-ipset $(1)/etc/uci-defaults/luci-vpn-ipset
 	$(INSTALL_DIR) $(1)/usr/bin

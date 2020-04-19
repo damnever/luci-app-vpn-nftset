@@ -1,0 +1,13 @@
+#!/bin/sh /etc/rc.common
+# vim: set ft=sh
+
+vpniface=$(uci get vpn-ipset.@general[0].interface 2>/dev/null)
+if [ "$INTERFACE" != "$vpniface" ]; then
+    exit 0
+fi
+
+if [ "$ACTION" = "ifdown" ]; then
+    /etc/init.d/vpn-ipset stop
+else  # ifup
+    /etc/init.d/vpn-ipset start
+fi

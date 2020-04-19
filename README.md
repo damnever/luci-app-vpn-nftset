@@ -14,6 +14,5 @@ make package/luci-app-vpn-ipset/compile V=99
 ```
 
 TODO:
-- [ ] reset ip route after interface change/reconfigure
 - [ ] trancate parsed domains (e.g. avatars0.githubusercontent.com -> githubusercontent.com).
 - [ ] IPv6 support (ip6tables)
