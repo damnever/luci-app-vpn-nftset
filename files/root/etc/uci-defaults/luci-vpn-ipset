@@ -1,0 +1,8 @@
+#!/bin/sh
+uci -q batch <<-EOF >/dev/null
+    delete ucitrack.@vpn-ipset[-1]
+    add ucitrack vpn-ipset
+    set ucitrack.@vpn-ipset[-1].init=vpn-ipset
+    commit ucitrack
+EOF
+exit 0

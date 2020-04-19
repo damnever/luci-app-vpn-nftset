@@ -1,0 +1,77 @@
+msgid ""
+msgstr "Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Enable"
+msgstr "启用"
+
+msgid "Required"
+msgstr "必填"
+
+msgid "VPN IPset"
+msgstr "VPN IPset"
+
+msgid "IPset based VPN rules (with dnsmasq support)."
+msgstr "配置管理基于 IPset 的 VPN 路由规则（支持 dnsmasq）"
+
+msgid "Basic Settings"
+msgstr "基本设置"
+
+msgid "e.g. 127.0.0.1#5300 or ::1#5300 (port is not required)."
+msgstr "比如 127.0.0.1#5300 或者 ::1#5300 (端口号 53 可省略)"
+
+msgid "IPset Name"
+msgstr "IPset 名字"
+
+msgid "Network Interface"
+msgstr "网络接口"
+
+msgid "Routing traffic to this interface by using iproute2 and iptables."
+msgstr "通过 iproute2 和 iptables 将流量路由到此网络接口"
+
+msgid "IP Addresses"
+msgstr "IP 地址列表"
+
+msgid "Adding the above IP addresses into IPset."
+msgstr "将以上 IP 地址加入 IPset"
+
+msgid "DNSMASQ IPset Settings"
+msgstr "DNSMASQ IPset 配置"
+
+msgid "Auto-update from provided URLs at 04:04 every day."
+msgstr "每天 04:04 会自动检查提供的 URL 并更新"
+
+msgid "DNS servers"
+msgstr "DNS 服务器列表"
+
+msgid "Domains"
+msgstr "域名列表"
+
+msgid "Adding above domains to dnsmasq ipset."
+msgstr "以上域名将会添加进 dnsmasq ipset"
+
+msgid "Download Interval"
+msgstr "下载间隔"
+
+msgid "GFWList URLs"
+msgstr "GFWList 格式的 URL 列表"
+
+msgid "Domains URLs"
+msgstr "通用格式的 URL 列表"
+
+msgid "Format: one domain per line"
+msgstr "通用格式：每行一个域名"
+
+msgid "Not enabled"
+msgstr "未启用"
+
+msgid "Disable"
+msgstr "停用"
+
+msgid "NOT RUNNING"
+msgstr "未运行"
+
+msgid "RUNNING"
+msgstr "运行中"
+
+msgid "Running Status"
+msgstr "运行状态"

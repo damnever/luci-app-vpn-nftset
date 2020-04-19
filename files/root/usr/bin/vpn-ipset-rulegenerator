@@ -1,0 +1,174 @@
+#!/bin/sh
+
+usage() {
+    cat <<-EOF
+Usage: $0 [OPTIONS]
+
+OPTIONS:
+    -w <gfwlist_url>       the GFWList url.
+    -u <domainlist_url>    the domain list url, format: one domain for line.
+    -s <dns_server>        the DNS server.
+    -i <ipsets>            the ipset name.
+    -d <dnsmasq_conf.d>    the dnsmasq config directory.
+    -h                     print this message.
+EOF
+    exit "$1"
+}
+
+BASE64_DECODE_CMD="base64 -d"
+SED_ERES="sed -r"
+if [ "$(uname -s)" = "Darwin" ]; then
+    BASE64_DECODE_CMD="base64 -D"
+    SED_ERES="sed -E"
+fi
+DNS_SERVERS=""
+IPSET_NAMES=""
+DNSMASQ_CONFD="/tmp/dnsmasq.d"
+
+apply_domains() {
+    infile=$1
+    outfile="$DNSMASQ_CONFD/vpn-ipset-rulegenerator_$2.conf.new"
+    if [ -n "$DNS_SERVERS" ]; then
+        grep -v '^ *#' < "$infile" | while IFS= read -r domain; do
+            if [ -n "$DNS_SERVERS" ]; then
+                echo "server=/${domain}/${DNS_SERVERS}" >> "${outfile}"
+            fi
+            echo "ipset=/${domain}/${IPSET_NAMES}" >> "${outfile}"
+        done
+    fi
+}
+
+replaceall() {
+    rm -rf "$DNSMASQ_CONFD"/vpn-ipset-rulegenerator_*.conf
+    ret=1
+    for f in "$DNSMASQ_CONFD"/vpn-ipset-rulegenerator_*.conf.new; do
+        [ -f "$f" ] || continue
+        newf=$(echo "$f" | sed 's/.conf.new/.conf/g')
+        mv "$f" "$newf"
+        ret=0
+    done
+    return "$ret"
+}
+
+generate_from_gfwlist() {
+    url=$1
+    index=$2
+    rm -rf "$tmp_dir"
+    tmp_dir="/tmp/vpn-ipset-rulegenerator.GFW"
+    mkdir -p $tmp_dir
+
+    if command -v curl >/dev/null; then
+        curl -s -L "$url" -o "$tmp_dir/gfwlist.txt" || return
+    else
+        wget -q "$url" -O "$tmp_dir/gfwlist.txt" || return
+    fi
+    $BASE64_DECODE_CMD "$tmp_dir/gfwlist.txt" > "$tmp_dir/decoded.txt"
+    # Ref: https://github.com/cokebar/gfwlist2dnsmasq/blob/3b5e3560ede7d1b0a1d02157576822752c48e671/gfwlist2dnsmasq.sh#L242
+    IGNORE_PATTERN='^\!|\[|^@@|(https?://){0,1}[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'
+    HEAD_FILTER_PATTERN='s#^(\|\|?)?(https?://)?##g'
+    TAIL_FILTER_PATTERN='s#/.*$|%2F.*$##g'
+    DOMAIN_PATTERN='([a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)+)'
+    HANDLE_WILDCARD_PATTERN='s#^(([a-zA-Z0-9]*\*[-a-zA-Z0-9]*)?(\.))?([a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)+)(\*[a-zA-Z0-9]*)?#\4#g'
+    # shellcheck disable=SC2086
+    grep -vE $IGNORE_PATTERN "$tmp_dir/decoded.txt" \
+        | $SED_ERES $HEAD_FILTER_PATTERN \
+        | $SED_ERES $TAIL_FILTER_PATTERN \
+        | grep -E $DOMAIN_PATTERN \
+        | $SED_ERES $HANDLE_WILDCARD_PATTERN \
+        > "$tmp_dir/domains.txt"
+
+    apply_domains "$tmp_dir/domains.txt" "$index"
+    rm -rf "$tmp_dir"
+}
+
+generate_from_domainlist() {
+    url=$1
+    index=$2
+    rm -rf "$tmp_dir"
+    tmp_dir="/tmp/vpn-ipset-rulegenerator.N"
+    mkdir -p $tmp_dir
+
+    if command -v curl >/dev/null; then
+        curl -s -L "$url" -o "$tmp_dir/domains.txt" || return
+    else
+        wget -q "$url" -O "$tmp_dir/domains.txt" || return
+    fi
+    apply_domains "$tmp_dir/domains.txt" "$index"
+    rm -rf "$tmp_dir"
+}
+
+
+gfwlists=""
+domainlists=""
+while getopts ":w:u:i:s:d:f:h" arg; do
+    case "$arg" in
+        w)
+            if [ -n "$gfwlists" ]; then
+                gfwlists="$gfwlists $OPTARG"
+            else
+                gfwlists="$OPTARG"
+            fi
+            ;;
+        u)
+            if [ -n "$domainlists" ]; then
+                domainlists="$domainlists $OPTARG"
+            else
+                domainlists="$OPTARG"
+            fi
+            ;;
+        s)
+            if [ -n "$DNS_SERVERS" ]; then
+                DNS_SERVERS="$DNS_SERVERS,$OPTARG"
+            else
+                DNS_SERVERS="$OPTARG"
+            fi
+            ;;
+        i)
+            if [ -n "$IPSET_NAMES" ]; then
+                IPSET_NAMES="$IPSET_NAMES,$OPTARG"
+            else
+                IPSET_NAMES="$OPTARG"
+            fi
+            ;;
+        d)
+            DNSMASQ_CONFD=$OPTARG
+            ;;
+        h)
+            usage 0
+            ;;
+        *)
+            usage 1
+            ;;
+    esac
+done
+
+if [ -z "${gfwlists}" ] && [ -z "${domainlists}" ]; then
+    echo "GFWLists or domains list required"
+    usage 1
+fi
+if [ -z "${IPSET_NAMES}" ]; then
+    echo "ipset name required"
+    usage 1
+fi
+if [ -n "${gfwlists}" ] && ! command -v base64 >/dev/null; then
+    echo "base64 command not found, (e.g. openwrt: opkg install coreutils-base64)"
+fi
+
+mkdir -p "$DNSMASQ_CONFD"
+index=0
+IFS=' '
+for url in ${gfwlists}; do
+    index=$((index + 1))
+    echo "processing GFWList: $url"
+    generate_from_gfwlist "$url" "$index"
+done
+for url in ${domainlists}; do
+    index=$((index + 1))
+    echo "processing DomainList: $url"
+    generate_from_domainlist "$url" "$index"
+done
+if replaceall; then
+    /etc/init.d/dnsmasq restart
+fi
+
+# vim: set ft=sh
