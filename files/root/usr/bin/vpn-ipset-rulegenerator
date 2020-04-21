@@ -27,7 +27,7 @@ DNSMASQ_CONFD="/tmp/dnsmasq.d"
 
 apply_domains() {
     infile=$1
-    outfile="$DNSMASQ_CONFD/vpn-ipset-rulegenerator_$2.conf.new"
+    outfile="$DNSMASQ_CONFD/vpn-ipset-gen_$2.conf.new"
     if [ -n "$DNS_SERVERS" ]; then
         grep -v '^ *#' < "$infile" | while IFS= read -r domain; do
             if [ -n "$DNS_SERVERS" ]; then
@@ -38,21 +38,33 @@ apply_domains() {
     fi
 }
 
-replaceall() {
-    rm -rf "$DNSMASQ_CONFD"/vpn-ipset-rulegenerator_*.conf
-    ret=1
-    for f in "$DNSMASQ_CONFD"/vpn-ipset-rulegenerator_*.conf.new; do
+replacedall() {
+    for f in "$DNSMASQ_CONFD"/vpn-ipset-gen_*.conf; do
+        [ -f "$f" ] || continue
+        md5sum "$f" | awk '{print $1}' >> "$DNSMASQ_CONFD/vpn-ipset-old.md5sum"
+    done
+    rm -rf "$DNSMASQ_CONFD"/vpn-ipset-gen_*.conf.old
+
+    for f in "$DNSMASQ_CONFD"/vpn-ipset-gen_*.conf.new; do
         [ -f "$f" ] || continue
         newf=$(echo "$f" | sed 's/.conf.new/.conf/g')
         mv "$f" "$newf"
-        ret=0
+        md5sum "$newf" | awk '{print $1}' >> "$DNSMASQ_CONFD/vpn-ipset-new.md5sum"
     done
+    ret=0
+    if [ -f "$DNSMASQ_CONFD/vpn-ipset-old.md5sum" ]; then
+        md51=$(sort "$DNSMASQ_CONFD/vpn-ipset-old.md5sum" | md5sum | awk '{print $1}')
+        md52=$(sort "$DNSMASQ_CONFD/vpn-ipset-new.md5sum" | md5sum | awk '{print $1}')
+        [ "$md51" != "$md52" ]
+        ret=$?
+    fi
+    rm -rf "$DNSMASQ_CONFD"/vpn-ipset-*.md5sum
     return "$ret"
 }
 
 generate_from_gfwlist() {
     url=$1
-    index=$2
+    id=$(echo "$url" | md5sum | awk '{print $1}')
     rm -rf "$tmp_dir"
     tmp_dir="/tmp/vpn-ipset-rulegenerator.GFW"
     mkdir -p $tmp_dir
@@ -65,7 +77,7 @@ generate_from_gfwlist() {
     $BASE64_DECODE_CMD "$tmp_dir/gfwlist.txt" > "$tmp_dir/decoded.txt"
     # Ref: https://github.com/cokebar/gfwlist2dnsmasq/blob/3b5e3560ede7d1b0a1d02157576822752c48e671/gfwlist2dnsmasq.sh#L242
     IGNORE_PATTERN='^\!|\[|^@@|(https?://){0,1}[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'
-    HEAD_FILTER_PATTERN='s#^(\|\|?)?(https?://)?##g'
+    HEAD_FILTER_PATTERN='s#^(\|\|?)?(https?://+)?##g'
     TAIL_FILTER_PATTERN='s#/.*$|%2F.*$##g'
     DOMAIN_PATTERN='([a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)+)'
     HANDLE_WILDCARD_PATTERN='s#^(([a-zA-Z0-9]*\*[-a-zA-Z0-9]*)?(\.))?([a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)+)(\*[a-zA-Z0-9]*)?#\4#g'
@@ -75,15 +87,15 @@ generate_from_gfwlist() {
         | $SED_ERES $TAIL_FILTER_PATTERN \
         | grep -E $DOMAIN_PATTERN \
         | $SED_ERES $HANDLE_WILDCARD_PATTERN \
-        > "$tmp_dir/domains.txt"
+        | sort -u > "$tmp_dir/domains.txt"
 
-    apply_domains "$tmp_dir/domains.txt" "$index"
+    apply_domains "$tmp_dir/domains.txt" "$id"
     rm -rf "$tmp_dir"
 }
 
 generate_from_domainlist() {
     url=$1
-    index=$2
+    id=$(echo "$url" | md5sum | awk '{print $1}')
     rm -rf "$tmp_dir"
     tmp_dir="/tmp/vpn-ipset-rulegenerator.N"
     mkdir -p $tmp_dir
@@ -93,7 +105,7 @@ generate_from_domainlist() {
     else
         wget -q "$url" -O "$tmp_dir/domains.txt" || return
     fi
-    apply_domains "$tmp_dir/domains.txt" "$index"
+    apply_domains "$tmp_dir/domains.txt" "$id"
     rm -rf "$tmp_dir"
 }
 
@@ -155,20 +167,17 @@ if [ -n "${gfwlists}" ] && ! command -v base64 >/dev/null; then
 fi
 
 mkdir -p "$DNSMASQ_CONFD"
-index=0
 IFS=' '
 for url in ${gfwlists}; do
-    index=$((index + 1))
     echo "processing GFWList: $url"
-    generate_from_gfwlist "$url" "$index"
+    generate_from_gfwlist "$url"
 done
 for url in ${domainlists}; do
-    index=$((index + 1))
     echo "processing DomainList: $url"
-    generate_from_domainlist "$url" "$index"
+    generate_from_domainlist "$url"
 done
-if replaceall; then
-    /etc/init.d/dnsmasq restart
+if replacedall; then
+    /etc/init.d/dnsmasq restart > /dev/null 2>&1
 fi
 
 # vim: set ft=sh

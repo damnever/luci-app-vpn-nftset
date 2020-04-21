@@ -31,7 +31,9 @@ uci_get_bool() {
 ipset_add_addresses() {
     ipset_name=$(uci_get "general" "ipset_name")
     for ip in $(uci_get "general" "ip_addresses"); do
-        ipset add "$ipset_name" "$ip"
+        ipset add "${ipset_name}_v4" "$ip"
+        # grep -qEo '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}'
+        # ipset add "${ipset_name}_v6" "$ip"
     done
 }
 
@@ -39,7 +41,8 @@ generate_dnsmasq_conf() {
     outfile=$1
 
     ipset_name=$(uci_get "general" "ipset_name")
-    ipsets="$ipset_name"
+    # ipsets="${ipset_name}_v4,${ipset_name}_v6"
+    ipsets="${ipset_name}_v4"
 
     dnsservers=""
     for server in $(uci_get "dnsmasq_ipset" "dns_servers"); do
@@ -51,12 +54,22 @@ generate_dnsmasq_conf() {
         fi
     done
 
+    newoutfile="${outfile}.new"
     for domain in $(uci_get "dnsmasq_ipset" "domains"); do
         if [ -n "$dnsservers" ]; then
-            echo "server=/${domain}/${dnsservers}" >> "${outfile}"
+            echo "server=/${domain}/${dnsservers}" >> "${newoutfile}"
         fi
-        echo "ipset=/${domain}/${ipsets}" >> "${outfile}"
+        echo "ipset=/${domain}/${ipsets}" >> "${newoutfile}"
     done
+    ret=0
+    if [ -f "$outfile" ]; then
+        md51=$(sort "$outfile" | md5sum | awk '{print $1}')
+        md52=$(sort "$newoutfile" | md5sum | awk '{print $1}')
+        [ "$md51" != "$md52" ]
+        ret=$?
+    fi
+    mv "$newoutfile" "$outfile"
+    return "$ret"
 }
 
 cleanup_crontab() {
@@ -65,7 +78,8 @@ cleanup_crontab() {
 
 setup_crontab() {
     ipset_name=$(uci_get "general" "ipset_name")
-    ipsetopts="-i $ipset_name"
+    # ipsetopts="-i ${ipset_name}_v4 -i ${ipset_name}_v6"
+    ipsetopts="-i ${ipset_name}_v4"
 
     dnsserveropts=""
     for server in $(uci_get "dnsmasq_ipset" "dns_servers"); do
@@ -101,16 +115,30 @@ setup_crontab() {
     $cmd  # run it
 }
 
+cleanup_iptables() {
+    $1 -t mangle -D PREROUTING -j $_MANGLE_FWMARK_CHAIN 2>/dev/null
+    $1 -t mangle -D OUTPUT -j $_MANGLE_FWMARK_CHAIN 2>/dev/null
+    $1 -t mangle -F $_MANGLE_FWMARK_CHAIN 2>/dev/null
+    $1 -t mangle -X $_MANGLE_FWMARK_CHAIN 2>/dev/null
+}
+
+setup_iptables() {
+    $1 -t mangle -N $_MANGLE_FWMARK_CHAIN
+    $1 -t mangle -A PREROUTING -j $_MANGLE_FWMARK_CHAIN
+    $1 -t mangle -A OUTPUT -j $_MANGLE_FWMARK_CHAIN
+    $1 -t mangle -A $_MANGLE_FWMARK_CHAIN -m set --match-set "$2" dst -j MARK --set-mark 0x09
+}
+
 cleanup_routetable() {
     # TODO
     ipset_name=$(uci_get "general" "ipset_name")
     if [ -n "$ipset_name" ]; then
-        ipset destroy "$ipset_name" 2>/dev/null
+        # ipset destroy "$ipset_name" 2>/dev/null
+        ipset destroy "${ipset_name}_v4" 2>/dev/null
+        # ipset destroy "${ipset_name}_v6" 2>/dev/null
     fi
-    iptables -t mangle -D PREROUTING -j $_MANGLE_FWMARK_CHAIN 2>/dev/null
-    iptables -t mangle -D OUTPUT -j $_MANGLE_FWMARK_CHAIN 2>/dev/null
-    iptables -t mangle -F $_MANGLE_FWMARK_CHAIN 2>/dev/null
-    iptables -t mangle -X $_MANGLE_FWMARK_CHAIN 2>/dev/null
+    cleanup_iptables iptables
+    # cleanup_iptables ip6tables
     ip rule del fwmark 9 2>/dev/null
     sed -i '/vpnipset_overwall/d' $_ROUTETABLE_FILE
 }
@@ -121,12 +149,11 @@ setup_routetable() {
         echo "ipset_name not provided, skip.."
         return
     fi
-    ipset create "$ipset_name" hash:ip
+    ipset create "${ipset_name}_v4" hash:ip family inet
+    # ipset create "${ipset_name}_v6" hash:ip family inet6
 
-    iptables -t mangle -D PREROUTING -j $_MANGLE_FWMARK_CHAIN 2>/dev/null
-    iptables -t mangle -D OUTPUT -j $_MANGLE_FWMARK_CHAIN 2>/dev/null
-    iptables -t mangle -F $_MANGLE_FWMARK_CHAIN 2>/dev/null
-    iptables -t mangle -X $_MANGLE_FWMARK_CHAIN 2>/dev/null
+    cleanup_iptables iptables
+    # cleanup_iptables ip6tables
     ip rule del fwmark 9
     sed -i '/vpnipset_overwall/d' $_ROUTETABLE_FILE
     interface=$(uci_get "general" "interface")
@@ -134,10 +161,8 @@ setup_routetable() {
         return
     fi
     ipaddr=$(ifconfig "$interface" | awk '/inet addr/{print substr($2,6)}')
-    iptables -t mangle -N $_MANGLE_FWMARK_CHAIN
-    iptables -t mangle -A PREROUTING -j $_MANGLE_FWMARK_CHAIN
-    iptables -t mangle -A OUTPUT -j $_MANGLE_FWMARK_CHAIN
-    iptables -t mangle -A $_MANGLE_FWMARK_CHAIN -m set --match-set "$ipset_name" dst -j MARK --set-mark 0x09
+    setup_iptables iptables "${ipset_name}_v4"
+    # setup_iptables ip6tables "${ipset_name}_v6"
 
     routetable="vpnipset_overwall_${interface}"
     # ip route flush table "$routetable"
@@ -152,7 +177,7 @@ setup_routetable() {
 }
 
 restart_dnsmasq() {
-    /etc/init.d/dnsmasq restart
+    /etc/init.d/dnsmasq restart > /dev/null 2>&1
 }
 
 cleanup() {
@@ -173,9 +198,7 @@ start() {
         return
     fi
 
-    generate_dnsmasq_conf "$_DNSMASQ_CONFD/vpn-ipset-domains.conf.new"
-    mv "$_DNSMASQ_CONFD"/vpn-ipset-domains.conf.new "$_DNSMASQ_CONFD"/vpn-ipset-domains.conf
-    if ls "$_DNSMASQ_CONFD"/vpn-ipset-*.conf > /dev/null 2>&1; then
+    if generate_dnsmasq_conf "$_DNSMASQ_CONFD"/vpn-ipset-domains.conf > /dev/null 2>&1; then
         restart_dnsmasq
     fi
 

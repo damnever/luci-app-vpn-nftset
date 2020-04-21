@@ -1,4 +1,5 @@
-**Use with caution**: not finished but usable, you may need to configure the firewall and other things as well.
+dnsmasq-full could be optional, but it is required :D.
+You may need to configure the firewall and other things as well.
 
 ```
 cd openwrt-sdk-*
@@ -14,5 +15,5 @@ make package/luci-app-vpn-ipset/compile V=99
 ```
 
 TODO:
-- [ ] trancate parsed domains (e.g. avatars0.githubusercontent.com -> githubusercontent.com).
-- [ ] IPv6 support (ip6tables)
+- [ ] trancate parsed domains? (e.g. avatars0.githubusercontent.com -> githubusercontent.com).
+- [ ] ipv6 support? (ip -6 route & ip6tables)

@@ -10,7 +10,7 @@ s.anonymous = true
 
 o = s:option(Flag, "enabled", translate("Enable"))
 
-o = s:option(Value, "ipset_name", translate("IPset Name"), translate("Required"))
+o = s:option(Value, "ipset_name", translate("IPset Name"), translate("{name}_v4 and {name}_v6 will be created for Ipv4 and IPv6."))
 o.optional = false
 o.rmempty = true
 

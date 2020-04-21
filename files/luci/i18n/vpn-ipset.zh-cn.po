@@ -4,8 +4,8 @@ msgstr "Content-Type: text/plain; charset=UTF-8\n"
 msgid "Enable"
 msgstr "启用"
 
-msgid "Required"
-msgstr "必填"
+msgid "{name}_v4 and {name}_v6 will be created for Ipv4 and IPv6."
+msgstr "将会创建 {name}_v4, {name}_v6 分别用于 IPv4 和 IPv6."
 
 msgid "VPN IPset"
 msgstr "VPN IPset"
@@ -49,9 +49,6 @@ msgstr "域名列表"
 msgid "Adding above domains to dnsmasq ipset."
 msgstr "以上域名将会添加进 dnsmasq ipset"
 
-msgid "Download Interval"
-msgstr "下载间隔"
-
 msgid "GFWList URLs"
 msgstr "GFWList 格式的 URL 列表"
 
@@ -66,12 +63,3 @@ msgstr "未启用"
 
 msgid "Disable"
 msgstr "停用"
-
-msgid "NOT RUNNING"
-msgstr "未运行"
-
-msgid "RUNNING"
-msgstr "运行中"
-
-msgid "Running Status"
-msgstr "运行状态"
