@@ -1,0 +1,199 @@
+#!/bin/sh /etc/rc.common
+# vim: set ft=sh
+
+# shellcheck disable=SC2034
+START=95
+STOP=15
+EXTRA_COMMANDS=delayed_reload
+
+CONFIG_NAME=vpn-ipset
+_DNSMASQ_CONFD=/tmp/dnsmasq.d  # See /tmp/etc/dnsmasq.conf.xxx
+mkdir -p "$_DNSMASQ_CONFD"
+_CRONTAB_FILE=/etc/crontabs/root
+if [ ! -f $_CRONTAB_FILE ]; then
+    touch $_CRONTAB_FILE
+fi
+_ROUTETABLE_FILE=/etc/iproute2/rt_tables
+_MANGLE_FWMARK_CHAIN=VPNIPSET_FWMARK
+
+uci_get() {  # by section type
+    ret=$(uci get "${CONFIG_NAME}.@${1}[0].${2}" 2>/dev/null)
+    echo "${ret:=$3}"
+}
+
+uci_get_bool() {
+    case "$(uci_get "$1" "$2")" in
+        1|on|true|yes|enabled) return 0;;
+    esac
+    return 1
+}
+
+ipset_add_addresses() {
+    ipset_name=$(uci_get "general" "ipset_name")
+    for ip in $(uci_get "general" "ip_addresses"); do
+        ipset add "$ipset_name" "$ip"
+    done
+}
+
+generate_dnsmasq_conf() {
+    outfile=$1
+
+    ipset_name=$(uci_get "general" "ipset_name")
+    ipsets="$ipset_name"
+
+    dnsservers=""
+    for server in $(uci_get "dnsmasq_ipset" "dns_servers"); do
+        # server=$(echo "$server" | sed 's/:/#/g')
+        if [ -z "$dnsservers" ]; then
+            dnsservers="$server"
+        else
+            dnsservers="$dnsservers,$server"
+        fi
+    done
+
+    for domain in $(uci_get "dnsmasq_ipset" "domains"); do
+        if [ -n "$dnsservers" ]; then
+            echo "server=/${domain}/${dnsservers}" >> "${outfile}"
+        fi
+        echo "ipset=/${domain}/${ipsets}" >> "${outfile}"
+    done
+}
+
+cleanup_crontab() {
+    sed -i '/vpn-ipset-rulegenerator/d' $_CRONTAB_FILE
+}
+
+setup_crontab() {
+    ipset_name=$(uci_get "general" "ipset_name")
+    ipsetopts="-i $ipset_name"
+
+    dnsserveropts=""
+    for server in $(uci_get "dnsmasq_ipset" "dns_servers"); do
+        # server=$(echo "$server" | sed 's/:/#/g')
+        if [ -z "$dnsserveropts" ]; then
+            dnsserveropts="-s $server"
+        else
+            dnsserveropts="$dnsserveropts -s $server"
+        fi
+    done
+
+    gfwlistopts=""
+    for gfwlist in $(uci_get "dnsmasq_ipset" "gfwlist_urls"); do
+        if [ -z "$gfwlistopts" ]; then
+            gfwlistopts="-w $gfwlist"
+        else
+            gfwlistopts="$gfwlistopts -w $gfwlist"
+        fi
+    done
+
+    domainlistopts=""
+    for domainlist in $(uci_get "dnsmasq_ipset" "domainslist_urls"); do
+        if [ -z "$domainlistopts" ]; then
+            domainlistopts="-u $domainlist"
+        else
+            domainlistopts="$domainlistopts -u $domainlist"
+        fi
+    done
+
+    cleanup_crontab
+    cmd="/usr/bin/vpn-ipset-rulegenerator -d $_DNSMASQ_CONFD $gfwlistopts $ipsetopts $dnsserveropts $domainlistopts"
+    echo "4 4 * * * $cmd" >> $_CRONTAB_FILE
+    $cmd  # run it
+}
+
+cleanup_routetable() {
+    # TODO
+    ipset_name=$(uci_get "general" "ipset_name")
+    if [ -n "$ipset_name" ]; then
+        ipset destroy "$ipset_name" 2>/dev/null
+    fi
+    iptables -t mangle -D PREROUTING -j $_MANGLE_FWMARK_CHAIN 2>/dev/null
+    iptables -t mangle -D OUTPUT -j $_MANGLE_FWMARK_CHAIN 2>/dev/null
+    iptables -t mangle -F $_MANGLE_FWMARK_CHAIN 2>/dev/null
+    iptables -t mangle -X $_MANGLE_FWMARK_CHAIN 2>/dev/null
+    ip rule del fwmark 9 2>/dev/null
+    sed -i '/vpnipset_overwall/d' $_ROUTETABLE_FILE
+}
+
+setup_routetable() {
+    ipset_name=$(uci_get "general" "ipset_name")
+    if [ -z "$ipset_name" ]; then
+        echo "ipset_name not provided, skip.."
+        return
+    fi
+    ipset create "$ipset_name" hash:ip
+
+    iptables -t mangle -D PREROUTING -j $_MANGLE_FWMARK_CHAIN 2>/dev/null
+    iptables -t mangle -D OUTPUT -j $_MANGLE_FWMARK_CHAIN 2>/dev/null
+    iptables -t mangle -F $_MANGLE_FWMARK_CHAIN 2>/dev/null
+    iptables -t mangle -X $_MANGLE_FWMARK_CHAIN 2>/dev/null
+    ip rule del fwmark 9
+    sed -i '/vpnipset_overwall/d' $_ROUTETABLE_FILE
+    interface=$(uci_get "general" "interface")
+    if [ -z "$interface" ] || [ "$interface" = "_nil_" ]; then
+        return
+    fi
+    ipaddr=$(ifconfig "$interface" | awk '/inet addr/{print substr($2,6)}')
+    iptables -t mangle -N $_MANGLE_FWMARK_CHAIN
+    iptables -t mangle -A PREROUTING -j $_MANGLE_FWMARK_CHAIN
+    iptables -t mangle -A OUTPUT -j $_MANGLE_FWMARK_CHAIN
+    iptables -t mangle -A $_MANGLE_FWMARK_CHAIN -m set --match-set "$ipset_name" dst -j MARK --set-mark 0x09
+
+    routetable="vpnipset_overwall_${interface}"
+    # ip route flush table "$routetable"
+    for num in $(seq 200 250); do  # table num: 0-255
+        if ! awk '{print $1}' < $_ROUTETABLE_FILE | grep -q "$num"; then
+            echo "$num $routetable" >> $_ROUTETABLE_FILE
+            break
+        fi
+    done
+    ip rule add fwmark 9 table "$routetable"
+    ip route add default via "$ipaddr" dev "$interface" table "$routetable"
+}
+
+restart_dnsmasq() {
+    /etc/init.d/dnsmasq restart
+}
+
+cleanup() {
+    cleanup_routetable
+    cleanup_crontab
+    if ls "$_DNSMASQ_CONFD"/vpn-ipset-*.conf > /dev/null 2>&1; then
+        rm -rf "$_DNSMASQ_CONFD"/vpn-ipset-*.conf
+        restart_dnsmasq
+    fi
+}
+
+
+start() {
+    # config_load "$CONFIG_NAME"
+    if ! uci_get_bool "general" "enabled"; then
+        echo "Not enabled, skip.."
+        cleanup
+        return
+    fi
+
+    generate_dnsmasq_conf "$_DNSMASQ_CONFD/vpn-ipset-domains.conf.new"
+    mv "$_DNSMASQ_CONFD"/vpn-ipset-domains.conf.new "$_DNSMASQ_CONFD"/vpn-ipset-domains.conf
+    if ls "$_DNSMASQ_CONFD"/vpn-ipset-*.conf > /dev/null 2>&1; then
+        restart_dnsmasq
+    fi
+
+    setup_crontab
+    setup_routetable
+    ipset_add_addresses
+}
+
+stop() {
+    # config_load "$CONFIG_NAME"
+    cleanup
+}
+
+reload() {
+    start
+}
+
+delayed_reload() {
+    # FIXME(damnever): dirty fix, see files/luci/model/cbi/vpn-ipset.lua
+    (sleep 10 && reload >/dev/null 2>&1) &
+}
