@@ -7,5 +7,8 @@ config general
 
 config dnsmasq_ipset
     list dns_servers '8.8.8.8'
+    list domains 'google.com'
     list domains 'githubusercontent.com'
+    list domains 'news.ycombinator.com'
+    list domains 'stackexchange.com'
     list gfwlist_urls 'https://pagure.io/gfwlist/raw/master/f/gfwlist.txt'
