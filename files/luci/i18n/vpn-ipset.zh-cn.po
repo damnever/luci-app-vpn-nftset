@@ -58,8 +58,5 @@ msgstr "通用格式的 URL 列表"
 msgid "Format: one domain per line"
 msgstr "通用格式：每行一个域名"
 
-msgid "Not enabled"
-msgstr "未启用"
-
 msgid "Disable"
 msgstr "停用"
