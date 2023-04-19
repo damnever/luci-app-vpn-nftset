@@ -31,9 +31,8 @@ uci_get_bool() {
 ipset_add_addresses() {
     ipset_name=$(uci_get "general" "ipset_name")
     for ip in $(uci_get "general" "ip_addresses"); do
-        ipset add "${ipset_name}_v4" "$ip"
-        # grep -qEo '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}'
-        # ipset add "${ipset_name}_v6" "$ip"
+        ipset -! add "${ipset_name}_v4" "$ip"
+        ipset -! add "${ipset_name}_v6" "$ip"
     done
 }
 
@@ -41,8 +40,7 @@ generate_dnsmasq_conf() {
     outfile=$1
 
     ipset_name=$(uci_get "general" "ipset_name")
-    # ipsets="${ipset_name}_v4,${ipset_name}_v6"
-    ipsets="${ipset_name}_v4"
+    ipsets="${ipset_name}_v4,${ipset_name}_v6"
 
     dnsservers=""
     for server in $(uci_get "dnsmasq_ipset" "dns_servers"); do
@@ -56,10 +54,21 @@ generate_dnsmasq_conf() {
 
     newoutfile="${outfile}.new"
     for domain in $(uci_get "dnsmasq_ipset" "domains"); do
-        if [ -n "$dnsservers" ]; then
-            echo "server=/${domain}/${dnsservers}" >> "${newoutfile}"
-        fi
-        echo "ipset=/${domain}/${ipsets}" >> "${newoutfile}"
+        case "${domain}" in
+        */*)
+            domain_nameserver=$domain
+            domain=$(echo "$domain_nameserver" | awk -F'/' '{print $1}')
+            nameserver=$(echo "$domain_nameserver" | awk -F'/' '{print $2}')
+            echo "server=/${domain}/${nameserver}" >> "${newoutfile}"
+            echo "ipset=/${domain}/${ipsets}" >> "${newoutfile}"
+            ;;
+        *  )
+            if [ -n "$dnsservers" ]; then
+                echo "server=/${domain}/${dnsservers}" >> "${newoutfile}"
+            fi
+            echo "ipset=/${domain}/${ipsets}" >> "${newoutfile}"
+            ;;
+        esac
     done
     ret=0
     if [ -f "$outfile" ]; then
@@ -78,8 +87,7 @@ cleanup_crontab() {
 
 setup_crontab() {
     ipset_name=$(uci_get "general" "ipset_name")
-    # ipsetopts="-i ${ipset_name}_v4 -i ${ipset_name}_v6"
-    ipsetopts="-i ${ipset_name}_v4"
+    ipsetopts="-i ${ipset_name}_v4 -i ${ipset_name}_v6"
 
     dnsserveropts=""
     for server in $(uci_get "dnsmasq_ipset" "dns_servers"); do
@@ -133,9 +141,8 @@ cleanup_routetable() {
     # TODO
     ipset_name=$(uci_get "general" "ipset_name")
     if [ -n "$ipset_name" ]; then
-        # ipset destroy "$ipset_name" 2>/dev/null
         ipset destroy "${ipset_name}_v4" 2>/dev/null
-        # ipset destroy "${ipset_name}_v6" 2>/dev/null
+        ipset destroy "${ipset_name}_v6" 2>/dev/null
     fi
     cleanup_iptables iptables
     # cleanup_iptables ip6tables
@@ -149,8 +156,8 @@ setup_routetable() {
         echo "ipset_name not provided, skip.."
         return
     fi
-    ipset create "${ipset_name}_v4" hash:ip family inet
-    # ipset create "${ipset_name}_v6" hash:ip family inet6
+    ipset -! create "${ipset_name}_v4" hash:net family inet
+    ipset -! create "${ipset_name}_v6" hash:net family inet6
 
     cleanup_iptables iptables
     # cleanup_iptables ip6tables
@@ -161,8 +168,9 @@ setup_routetable() {
         return
     fi
     ipaddr=$(ifconfig "$interface" | awk '/inet addr/{print substr($2,6)}')
+    ip6addr=$(ifconfig "$interface" | awk '/inet6 addr/{print substr($2,6)}')
     setup_iptables iptables "${ipset_name}_v4"
-    # setup_iptables ip6tables "${ipset_name}_v6"
+    setup_iptables ip6tables "${ipset_name}_v6"
 
     routetable="vpnipset_overwall_${interface}"
     # ip route flush table "$routetable"
@@ -174,6 +182,10 @@ setup_routetable() {
     done
     ip rule add fwmark 9 table "$routetable"
     ip route add default via "$ipaddr" dev "$interface" table "$routetable"
+    if [ -n "${ip6addr}" ]; then
+        ip -6 rule add fwmark 9 table "$routetable"
+        ip -6 route add default via "$ip6addr" dev "$interface" table "$routetable"
+    fi
 }
 
 restart_dnsmasq() {

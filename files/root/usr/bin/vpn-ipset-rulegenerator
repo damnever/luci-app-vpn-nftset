@@ -18,12 +18,38 @@ EOF
 BASE64_DECODE_CMD="base64 -d"
 SED_ERES="sed -r"
 if [ "$(uname -s)" = "Darwin" ]; then
-    BASE64_DECODE_CMD="base64 -D"
-    SED_ERES="sed -E"
+    BASE64_DECODE_CMD="base64 -D -i"
+    echo "NOTE: brew install gnu-sed; brew info gnu-sed"
 fi
 DNS_SERVERS=""
 IPSET_NAMES=""
 DNSMASQ_CONFD="/tmp/dnsmasq.d"
+_SED_PATTERN_TIDY=""
+
+
+generate_sed_tidy_pattern_from_config_file() {
+    tmpfile=$(mktemp)
+    for file in "$DNSMASQ_CONFD"/vpn-ipset*.conf; do
+        case "$file" in
+            "$DNSMASQ_CONFD"/vpn-ipset-gen_*.conf) continue ;;
+        esac
+        while IFS= read -r line; do
+            part=$(echo "$line" | awk -F'=' '{print $2}')
+            domain=$(echo "$part" | awk -F'/' '{print $2}')
+            echo "$domain" >> "$tmpfile"
+        done < "$file"
+    done
+
+    if [ -s "$tmpfile" ]; then
+        _custom_domains=$(sort < "$tmpfile" | uniq | tr '\n' '|' | sed 's/\./\\./g')
+        _suffix="|"
+        _custom_domains="${_custom_domains%"$_suffix"}"
+
+        _SED_PATTERN_TIDY="/^(server=\/|ipset=\/).*?($_custom_domains)\//d"
+    fi
+    rm "$tmpfile"
+}
+
 
 apply_domains() {
     infile=$1
@@ -35,6 +61,10 @@ apply_domains() {
             fi
             echo "ipset=/${domain}/${IPSET_NAMES}" >> "${outfile}"
         done
+    fi
+
+    if [ -n "$_SED_PATTERN_TIDY" ]; then
+        ${SED_ERES} -i "$_SED_PATTERN_TIDY" "$outfile"
     fi
 }
 
@@ -166,6 +196,8 @@ if [ -n "${gfwlists}" ] && ! command -v base64 >/dev/null; then
     echo "base64 command not found, (e.g. openwrt: opkg install coreutils-base64)"
 fi
 
+generate_sed_tidy_pattern_from_config_file
+echo "sed pattern with existing domains: $_SED_PATTERN_TIDY"
 mkdir -p "$DNSMASQ_CONFD"
 IFS=' '
 for url in ${gfwlists}; do
@@ -177,6 +209,7 @@ for url in ${domainlists}; do
     generate_from_domainlist "$url"
 done
 if replacedall; then
+    echo "reload dnsmasq"
     /etc/init.d/dnsmasq restart > /dev/null 2>&1
 fi
 

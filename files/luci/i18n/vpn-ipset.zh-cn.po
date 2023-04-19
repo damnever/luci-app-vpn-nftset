@@ -46,8 +46,8 @@ msgstr "DNS 服务器列表"
 msgid "Domains"
 msgstr "域名列表"
 
-msgid "Adding above domains to dnsmasq ipset."
-msgstr "以上域名将会添加进 dnsmasq ipset"
+msgid "Adding above domains to ipset, a custom nameserver could be added like this 'e.g/ns#5353'."
+msgstr "以上域名将会添加进 ipset，可以像这样添加一个额外的 nameserver：'e.g/ns#5353'"
 
 msgid "GFWList URLs"
 msgstr "GFWList 格式的 URL 列表"
