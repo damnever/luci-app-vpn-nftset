@@ -1,5 +1,6 @@
 local m, s, o
 local uci = luci.model.uci.cursor()
+local datatypes = luci.cbi.datatypes
 
 m = Map("vpn-ipset", translate("VPN IPset"), translate("IPset based VPN rules (with dnsmasq support)."))
 
@@ -10,11 +11,13 @@ s.anonymous = true
 
 o = s:option(Flag, "enabled", translate("Enable"))
 
-o = s:option(Value, "ipset_name", translate("IPset Name"), translate("{name}_v4 and {name}_v6 will be created for Ipv4 and IPv6."))
+o = s:option(Value, "ipset_name", translate("IPset Name"),
+    translate("{name}_v4 and {name}_v6 will be created for Ipv4 and IPv6."))
 o.optional = false
 o.rmempty = true
 
-o = s:option(Value, "interface", translate("Network Interface"), translate("Routing traffic to this interface by using iproute2 and iptables."))
+o = s:option(Value, "interface", translate("Network Interface"),
+    translate("Routing traffic to this interface by using iproute2 and iptables."))
 o:value("_nil_", translate("Disable"))
 uci:foreach("network", "interface", function(section)
     local name = section[".name"]
@@ -25,21 +28,23 @@ end)
 o.default = "_nil_"
 o.rmempty = false
 
-o = s:option(DynamicList, "ip_addresses", translate("IP Addresses"), translate("Adding the above IP addresses into IPset."))
+o = s:option(DynamicList, "ip_addresses", translate("IP Addresses"),
+    translate("Adding the above IP addresses into IPset."))
 o.datatype = "ipaddr"
 o.rmempty = true
 
 
 -- [[ IPset Rules for DNSMASQ]] --
-s = m:section(TypedSection, "dnsmasq_ipset", translate("DNSMASQ IPset Settings"), translate("Auto-update from provided URLs at 04:04 every day."))
+s = m:section(TypedSection, "dnsmasq_ipset", translate("DNSMASQ IPset Settings"),
+    translate("Auto-update from provided URLs at 04:04 every day."))
 s.anonymous = true
 
-o = s:option(DynamicList, "dns_servers", translate("DNS servers"), translate("e.g. 127.0.0.1#5300 or ::1#5300 (port is not required)."))
+o = s:option(DynamicList, "dns_servers", translate("DNS servers"),
+    translate("e.g. 127.0.0.1#5300 or ::1#5300 (port is not required)."))
 o.rmempty = true
 
-o = s:option(DynamicList, "domains", translate("Domains"), translate("Adding above domains to dnsmasq ipset."))
-o.datatype = "host"
-o.size = 128
+o = s:option(DynamicList, "domains", translate("Domains"),
+    translate("Adding above domains to ipset, a custom nameserver could be added like this 'e.g/ns#5353'."))
 o.rmempty = true
 
 o = s:option(DynamicList, "gfwlist_urls", translate("GFWList URLs"), translate("https://github.com/gfwlist/gfwlist"))
@@ -59,4 +64,5 @@ function m.on_after_commit(self)
     -- command will run in background with `sleep 10`.
     luci.sys.call("/etc/init.d/vpn-ipset delayed_reload")
 end
+
 return m
