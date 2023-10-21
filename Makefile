@@ -1,12 +1,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-vpn-ipset
-PKG_VERSION:=0.0.7
+PKG_VERSION:=0.0.8
 PKG_RELEASE:=1
 
 PKG_LICENSE:=GPLv3
 PKG_LICENSE_FILES:=LICENSE
-PKG_MAINTAINER:=Xiaochao Dong <dxc.wolf@gmail.com>
+PKG_MAINTAINER:=Xiaochao Dong <the.xcdong@gmail.com>
 
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
 
