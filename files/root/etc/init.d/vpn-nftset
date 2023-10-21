@@ -6,7 +6,7 @@ START=95
 STOP=15
 EXTRA_COMMANDS=delayed_reload
 
-CONFIG_NAME=vpn-ipset
+CONFIG_NAME=vpn-nftset
 _DNSMASQ_CONFD=/tmp/dnsmasq.d  # See /tmp/etc/dnsmasq.conf.xxx
 mkdir -p "$_DNSMASQ_CONFD"
 _CRONTAB_FILE=/etc/crontabs/root
@@ -14,7 +14,8 @@ if [ ! -f $_CRONTAB_FILE ]; then
     touch $_CRONTAB_FILE
 fi
 _ROUTETABLE_FILE=/etc/iproute2/rt_tables
-_MANGLE_FWMARK_CHAIN=VPNIPSET_FWMARK
+_ROUTETABLE_PREFIX=vpnnftset_
+_FWMARK_TABLE=vpnnftset_fw
 
 uci_get() {  # by section type
     ret=$(uci get "${CONFIG_NAME}.@${1}[0].${2}" 2>/dev/null)
@@ -28,22 +29,24 @@ uci_get_bool() {
     return 1
 }
 
-ipset_add_addresses() {
-    ipset_name=$(uci_get "general" "ipset_name")
+nftset_add_addresses() {
+    nftset_name=$(uci_get "general" "nftset_name")
     for ip in $(uci_get "general" "ip_addresses"); do
-        ipset -! add "${ipset_name}_v4" "$ip"
-        ipset -! add "${ipset_name}_v6" "$ip"
+        # shellcheck disable=SC1083
+        nft add element inet ${_FWMARK_TABLE} "${nftset_name}_v4" { "$ip" } 2>/dev/null || true
+        # shellcheck disable=SC1083
+        nft add element inet ${_FWMARK_TABLE} "${nftset_name}_v6" { "$ip" } 2>/dev/null || true
     done
 }
 
 generate_dnsmasq_conf() {
     outfile=$1
 
-    ipset_name=$(uci_get "general" "ipset_name")
-    ipsets="${ipset_name}_v4,${ipset_name}_v6"
+    nftset_name=$(uci_get "general" "nftset_name")
+    nftsets="4#inet#${_FWMARK_TABLE}#${nftset_name}_v4,6#inet#${_FWMARK_TABLE}#${nftset_name}_v6"
 
     dnsservers=""
-    for server in $(uci_get "dnsmasq_ipset" "dns_servers"); do
+    for server in $(uci_get "dnsmasq_nftset" "dns_servers"); do
         # server=$(echo "$server" | sed 's/:/#/g')
         if [ -z "$dnsservers" ]; then
             dnsservers="$server"
@@ -53,20 +56,20 @@ generate_dnsmasq_conf() {
     done
 
     newoutfile="${outfile}.new"
-    for domain in $(uci_get "dnsmasq_ipset" "domains"); do
+    for domain in $(uci_get "dnsmasq_nftset" "domains"); do
         case "${domain}" in
         */*)
             domain_nameserver=$domain
             domain=$(echo "$domain_nameserver" | awk -F'/' '{print $1}')
             nameserver=$(echo "$domain_nameserver" | awk -F'/' '{print $2}')
             echo "server=/${domain}/${nameserver}" >> "${newoutfile}"
-            echo "ipset=/${domain}/${ipsets}" >> "${newoutfile}"
+            echo "nftset=/${domain}/${nftsets}" >> "${newoutfile}"
             ;;
         *  )
             if [ -n "$dnsservers" ]; then
                 echo "server=/${domain}/${dnsservers}" >> "${newoutfile}"
             fi
-            echo "ipset=/${domain}/${ipsets}" >> "${newoutfile}"
+            echo "nftset=/${domain}/${nftsets}" >> "${newoutfile}"
             ;;
         esac
     done
@@ -82,15 +85,15 @@ generate_dnsmasq_conf() {
 }
 
 cleanup_crontab() {
-    sed -i '/vpn-ipset-rulegenerator/d' $_CRONTAB_FILE
+    sed -i '/vpn-nftset-rulegenerator/d' $_CRONTAB_FILE
 }
 
 setup_crontab() {
-    ipset_name=$(uci_get "general" "ipset_name")
-    ipsetopts="-i ${ipset_name}_v4 -i ${ipset_name}_v6"
+    nftset_name=$(uci_get "general" "nftset_name")
+    nftsetopts="-i 4#inet#${_FWMARK_TABLE}#${nftset_name}_v4 -i 6#inet#${_FWMARK_TABLE}E#${nftset_name}_v6"
 
     dnsserveropts=""
-    for server in $(uci_get "dnsmasq_ipset" "dns_servers"); do
+    for server in $(uci_get "dnsmasq_nftset" "dns_servers"); do
         # server=$(echo "$server" | sed 's/:/#/g')
         if [ -z "$dnsserveropts" ]; then
             dnsserveropts="-s $server"
@@ -100,7 +103,7 @@ setup_crontab() {
     done
 
     gfwlistopts=""
-    for gfwlist in $(uci_get "dnsmasq_ipset" "gfwlist_urls"); do
+    for gfwlist in $(uci_get "dnsmasq_nftset" "gfwlist_urls"); do
         if [ -z "$gfwlistopts" ]; then
             gfwlistopts="-w $gfwlist"
         else
@@ -109,7 +112,7 @@ setup_crontab() {
     done
 
     domainlistopts=""
-    for domainlist in $(uci_get "dnsmasq_ipset" "domainslist_urls"); do
+    for domainlist in $(uci_get "dnsmasq_nftset" "domainslist_urls"); do
         if [ -z "$domainlistopts" ]; then
             domainlistopts="-u $domainlist"
         else
@@ -118,61 +121,48 @@ setup_crontab() {
     done
 
     cleanup_crontab
-    cmd="/usr/bin/vpn-ipset-rulegenerator -d $_DNSMASQ_CONFD $gfwlistopts $ipsetopts $dnsserveropts $domainlistopts"
+    cmd="/usr/bin/vpn-nftset-rulegenerator -d $_DNSMASQ_CONFD $gfwlistopts $nftsetopts $dnsserveropts $domainlistopts"
     echo "4 4 * * * $cmd" >> $_CRONTAB_FILE
     $cmd  # run it
 }
 
-cleanup_iptables() {
-    $1 -t mangle -D PREROUTING -j $_MANGLE_FWMARK_CHAIN 2>/dev/null
-    $1 -t mangle -D OUTPUT -j $_MANGLE_FWMARK_CHAIN 2>/dev/null
-    $1 -t mangle -F $_MANGLE_FWMARK_CHAIN 2>/dev/null
-    $1 -t mangle -X $_MANGLE_FWMARK_CHAIN 2>/dev/null
-}
-
-setup_iptables() {
-    $1 -t mangle -N $_MANGLE_FWMARK_CHAIN
-    $1 -t mangle -A PREROUTING -j $_MANGLE_FWMARK_CHAIN
-    $1 -t mangle -A OUTPUT -j $_MANGLE_FWMARK_CHAIN
-    $1 -t mangle -A $_MANGLE_FWMARK_CHAIN -m set --match-set "$2" dst -j MARK --set-mark 0x09
-}
-
 cleanup_routetable() {
-    # TODO
-    ipset_name=$(uci_get "general" "ipset_name")
-    if [ -n "$ipset_name" ]; then
-        ipset destroy "${ipset_name}_v4" 2>/dev/null
-        ipset destroy "${ipset_name}_v6" 2>/dev/null
+    nftset_name=$(uci_get "general" "nftset_name")
+    if [ -n "$nftset_name" ]; then
+        nft delete set inet $_FWMARK_TABLE "${nftset_name}_v4" 2>/dev/null
+        nft delete set inet $_FWMARK_TABLE "${nftset_name}_v6" 2>/dev/null
     fi
-    cleanup_iptables iptables
-    # cleanup_iptables ip6tables
-    ip rule del fwmark 9 2>/dev/null
-    sed -i '/vpnipset_overwall/d' $_ROUTETABLE_FILE
+    nft delete table inet $_FWMARK_TABLE 2>/dev/null
+    ip rule del fwmark 7 2>/dev/null
+    sed -i "/${_ROUTETABLE_PREFIX}/d" $_ROUTETABLE_FILE
 }
 
 setup_routetable() {
-    ipset_name=$(uci_get "general" "ipset_name")
-    if [ -z "$ipset_name" ]; then
-        echo "ipset_name not provided, skip.."
+    nftset_name=$(uci_get "general" "nftset_name")
+    if [ -z "$nftset_name" ]; then
+        echo "nftset_name not provided, skip.."
         return
     fi
-    ipset -! create "${ipset_name}_v4" hash:net family inet
-    ipset -! create "${ipset_name}_v6" hash:net family inet6
+    cleanup_routetable
 
-    cleanup_iptables iptables
-    # cleanup_iptables ip6tables
-    ip rule del fwmark 9
-    sed -i '/vpnipset_overwall/d' $_ROUTETABLE_FILE
+    nft add table inet $_FWMARK_TABLE
+    nft add set inet $_FWMARK_TABLE "${nftset_name}_v4" { type ipv4_addr \; }
+    nft add set inet $_FWMARK_TABLE "${nftset_name}_v6"  { type ipv6_addr \; }
+    nft add chain inet $_FWMARK_TABLE mangle_prerouting { type filter hook prerouting priority -150 \; policy accept \; }
+    nft add chain inet $_FWMARK_TABLE mangle_output { type route hook output priority -150 \; policy accept \; }
+    nft add rule inet $_FWMARK_TABLE mangle_prerouting ip daddr "@${nftset_name}_v4" counter meta mark set 0x7
+    nft add rule inet $_FWMARK_TABLE mangle_output ip daddr "@${nftset_name}_v4" counter meta mark set 0x7
+    nft add rule inet $_FWMARK_TABLE mangle_prerouting ip6 daddr "@${nftset_name}_v6" counter meta mark set 0x7
+    nft add rule inet $_FWMARK_TABLE mangle_output ip6 daddr "@${nftset_name}_v6" counter meta mark set 0x7
+
     interface=$(uci_get "general" "interface")
     if [ -z "$interface" ] || [ "$interface" = "_nil_" ]; then
         return
     fi
     ipaddr=$(ifconfig "$interface" | awk '/inet addr/{print substr($2,6)}')
-    ip6addr=$(ifconfig "$interface" | awk '/inet6 addr/{print substr($2,6)}')
-    setup_iptables iptables "${ipset_name}_v4"
-    setup_iptables ip6tables "${ipset_name}_v6"
+    ip6addr=$(ifconfig "$interface" | awk '/inet6 addr/{print substr($3,0)}')
 
-    routetable="vpnipset_overwall_${interface}"
+    routetable="${_ROUTETABLE_PREFIX}${interface}"
     # ip route flush table "$routetable"
     for num in $(seq 200 250); do  # table num: 0-255
         if ! awk '{print $1}' < $_ROUTETABLE_FILE | grep -q "$num"; then
@@ -180,10 +170,10 @@ setup_routetable() {
             break
         fi
     done
-    ip rule add fwmark 9 table "$routetable"
+    ip rule add fwmark 7 table "$routetable"
     ip route add default via "$ipaddr" dev "$interface" table "$routetable"
     if [ -n "${ip6addr}" ]; then
-        ip -6 rule add fwmark 9 table "$routetable"
+        ip -6 rule add fwmark 7 table "$routetable"
         ip -6 route add default via "$ip6addr" dev "$interface" table "$routetable"
     fi
 }
@@ -195,8 +185,8 @@ restart_dnsmasq() {
 cleanup() {
     cleanup_routetable
     cleanup_crontab
-    if ls "$_DNSMASQ_CONFD"/vpn-ipset-*.conf > /dev/null 2>&1; then
-        rm -rf "$_DNSMASQ_CONFD"/vpn-ipset-*.conf
+    if ls "$_DNSMASQ_CONFD"/vpn-nftset-*.conf > /dev/null 2>&1; then
+        rm -rf "$_DNSMASQ_CONFD"/vpn-nftset-*.conf
         restart_dnsmasq
     fi
 }
@@ -210,13 +200,13 @@ start() {
         return
     fi
 
-    if generate_dnsmasq_conf "$_DNSMASQ_CONFD"/vpn-ipset-domains.conf > /dev/null 2>&1; then
+    if generate_dnsmasq_conf "$_DNSMASQ_CONFD"/vpn-nftset-domains.conf > /dev/null 2>&1; then
         restart_dnsmasq
     fi
 
     setup_crontab
     setup_routetable
-    ipset_add_addresses
+    nftset_add_addresses
 }
 
 stop() {
@@ -229,6 +219,6 @@ reload() {
 }
 
 delayed_reload() {
-    # FIXME(damnever): dirty fix, see files/luci/model/cbi/vpn-ipset.lua
+    # FIXME(damnever): dirty fix, see files/luci/model/cbi/vpn-nftset.lua
     (sleep 10 && reload >/dev/null 2>&1) &
 }

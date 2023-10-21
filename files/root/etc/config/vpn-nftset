@@ -1,6 +1,6 @@
 config general
     option enabled '0'
-    option ipset_name 'WG0_OVERWALL'
+    option nftset_name 'VPN_NFTSET_DEFAULT'
     option interface '_nil_'
     list ip_addresses '8.8.8.8'
     list ip_addresses '91.108.56.0/22'
@@ -14,7 +14,7 @@ config general
     list ip_addresses '185.76.151.0/24'
 
 
-config dnsmasq_ipset
+config dnsmasq_nftset
     list dns_servers '8.8.8.8'
     list gfwlist_urls 'https://pagure.io/gfwlist/raw/master/f/gfwlist.txt'
     list domains 'githubusercontent.com'

@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
-PKG_NAME:=luci-app-vpn-ipset
-PKG_VERSION:=0.0.8
+PKG_NAME:=luci-app-vpn-nftset
+PKG_VERSION:=2.0.0
 PKG_RELEASE:=1
 
 PKG_LICENSE:=GPLv3
@@ -12,17 +12,17 @@ PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
 
 include $(INCLUDE_DIR)/package.mk
 
-define Package/luci-app-vpn-ipset
+define Package/luci-app-vpn-nftset
 	SECTION:=luci
 	CATEGORY:=LuCI
 	SUBMENU:=3. Applications
-	TITLE:=LuCI Support for IPset based VPN Routing Rules
+	TITLE:=LuCI Support for NFTables based VPN Routing Rules
 	PKGARCH:=all
 	DEPENDS:=+dnsmasq-full +coreutils-base64 +wget +ca-bundle +ca-certificates +libustream-mbedtls
 endef
 
-define Package/luci-app-vpn-ipset/description
-	LuCI Support for IPset based VPN Routing Rules.
+define Package/luci-app-vpn-nftset/description
+	LuCI Support for NFTables Based VPN Routing Rules.
 endef
 
 define Build/Prepare
@@ -36,40 +36,40 @@ endef
 define Build/Compile
 endef
 
-define Package/luci-app-vpn-ipset/postinst
+define Package/luci-app-vpn-nftset/postinst
 #!/bin/sh
 if [ -z "$${IPKG_INSTROOT}" ]; then
-	if [ -f /etc/uci-defaults/luci-vpn-ipset ]; then
-		( . /etc/uci-defaults/luci-vpn-ipset ) && \
-		rm -f /etc/uci-defaults/luci-vpn-ipset
+	if [ -f /etc/uci-defaults/luci-vpn-nftset ]; then
+		( . /etc/uci-defaults/luci-vpn-nftset ) && \
+		rm -f /etc/uci-defaults/luci-vpn-nftset
 	fi
 	rm -rf /tmp/luci-indexcache /tmp/luci-modulecache
 fi
 exit 0
 endef
 
-define Package/luci-app-vpn-ipset/conffiles
-/etc/config/vpn-ipset
+define Package/luci-app-vpn-nftset/conffiles
+/etc/config/vpn-nftset
 endef
 
 
-define Package/luci-app-vpn-ipset/install
+define Package/luci-app-vpn-nftset/install
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/i18n
-	$(INSTALL_DATA) $(PKG_BUILD_DIR)/vpn-ipset.*.lmo $(1)/usr/lib/lua/luci/i18n/
+	$(INSTALL_DATA) $(PKG_BUILD_DIR)/vpn-nftset.*.lmo $(1)/usr/lib/lua/luci/i18n/
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
 	$(INSTALL_DATA) ./files/luci/controller/*.lua $(1)/usr/lib/lua/luci/controller/
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/model/cbi
 	$(INSTALL_DATA) ./files/luci/model/cbi/*.lua $(1)/usr/lib/lua/luci/model/cbi/
 	$(INSTALL_DIR) $(1)/etc/config
-	$(INSTALL_DATA) ./files/root/etc/config/vpn-ipset $(1)/etc/config/vpn-ipset
+	$(INSTALL_DATA) ./files/root/etc/config/vpn-nftset $(1)/etc/config/vpn-nftset
 	$(INSTALL_DIR) $(1)/etc/init.d
-	$(INSTALL_BIN) ./files/root/etc/init.d/vpn-ipset $(1)/etc/init.d/vpn-ipset
+	$(INSTALL_BIN) ./files/root/etc/init.d/vpn-nftset $(1)/etc/init.d/vpn-nftset
 	$(INSTALL_DIR) $(1)/etc/hotplug.d/iface
-	$(INSTALL_BIN) ./files/root/etc/hotplug.d/iface/99-vpn-ipset $(1)/etc/hotplug.d/iface/99-vpn-ipset
+	$(INSTALL_BIN) ./files/root/etc/hotplug.d/iface/99-vpn-nftset $(1)/etc/hotplug.d/iface/99-vpn-nftset
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
-	$(INSTALL_BIN) ./files/root/etc/uci-defaults/luci-vpn-ipset $(1)/etc/uci-defaults/luci-vpn-ipset
+	$(INSTALL_BIN) ./files/root/etc/uci-defaults/luci-vpn-nftset $(1)/etc/uci-defaults/luci-vpn-nftset
 	$(INSTALL_DIR) $(1)/usr/bin
-	$(INSTALL_BIN) ./files/root/usr/bin/vpn-ipset-rulegenerator $(1)/usr/bin/vpn-ipset-rulegenerator
+	$(INSTALL_BIN) ./files/root/usr/bin/vpn-nftset-rulegenerator $(1)/usr/bin/vpn-nftset-rulegenerator
 endef
 
-$(eval $(call BuildPackage,luci-app-vpn-ipset))
+$(eval $(call BuildPackage,luci-app-vpn-nftset))
