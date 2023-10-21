@@ -8,7 +8,7 @@ OPTIONS:
     -w <gfwlist_url>       the GFWList url.
     -u <domainlist_url>    the domain list url, format: one domain for line.
     -s <dns_server>        the DNS server.
-    -i <ipsets>            the ipset name.
+    -i <nftsets>           the nftset for dnsmasq, e.g. 4#inet#table#nftset_name.
     -d <dnsmasq_conf.d>    the dnsmasq config directory.
     -h                     print this message.
 EOF
@@ -22,16 +22,16 @@ if [ "$(uname -s)" = "Darwin" ]; then
     echo "NOTE: brew install gnu-sed; brew info gnu-sed"
 fi
 DNS_SERVERS=""
-IPSET_NAMES=""
+NFTSET_NAMES=""
 DNSMASQ_CONFD="/tmp/dnsmasq.d"
 _SED_PATTERN_TIDY=""
 
 
 generate_sed_tidy_pattern_from_config_file() {
     tmpfile=$(mktemp)
-    for file in "$DNSMASQ_CONFD"/vpn-ipset*.conf; do
+    for file in "$DNSMASQ_CONFD"/vpn-nftset*.conf; do
         case "$file" in
-            "$DNSMASQ_CONFD"/vpn-ipset-gen_*.conf) continue ;;
+            "$DNSMASQ_CONFD"/vpn-nftset-gen_*.conf) continue ;;
         esac
         while IFS= read -r line; do
             part=$(echo "$line" | awk -F'=' '{print $2}')
@@ -45,7 +45,7 @@ generate_sed_tidy_pattern_from_config_file() {
         _suffix="|"
         _custom_domains="${_custom_domains%"$_suffix"}"
 
-        _SED_PATTERN_TIDY="/^(server=\/|ipset=\/).*?($_custom_domains)\//d"
+        _SED_PATTERN_TIDY="/^(server=\/|nftset=\/).*?($_custom_domains)\//d"
     fi
     rm "$tmpfile"
 }
@@ -53,13 +53,13 @@ generate_sed_tidy_pattern_from_config_file() {
 
 apply_domains() {
     infile=$1
-    outfile="$DNSMASQ_CONFD/vpn-ipset-gen_$2.conf.new"
+    outfile="$DNSMASQ_CONFD/vpn-nftset-gen_$2.conf.new"
     if [ -n "$DNS_SERVERS" ]; then
         grep -v '^ *#' < "$infile" | while IFS= read -r domain; do
             if [ -n "$DNS_SERVERS" ]; then
                 echo "server=/${domain}/${DNS_SERVERS}" >> "${outfile}"
             fi
-            echo "ipset=/${domain}/${IPSET_NAMES}" >> "${outfile}"
+            echo "nftset=/${domain}/${NFTSET_NAMES}" >> "${outfile}"
         done
     fi
 
@@ -69,26 +69,26 @@ apply_domains() {
 }
 
 replacedall() {
-    for f in "$DNSMASQ_CONFD"/vpn-ipset-gen_*.conf; do
+    for f in "$DNSMASQ_CONFD"/vpn-nftset-gen_*.conf; do
         [ -f "$f" ] || continue
-        md5sum "$f" | awk '{print $1}' >> "$DNSMASQ_CONFD/vpn-ipset-old.md5sum"
+        md5sum "$f" | awk '{print $1}' >> "$DNSMASQ_CONFD/vpn-nftset-old.md5sum"
     done
-    rm -rf "$DNSMASQ_CONFD"/vpn-ipset-gen_*.conf.old
+    rm -rf "$DNSMASQ_CONFD"/vpn-nftset-gen_*.conf.old
 
-    for f in "$DNSMASQ_CONFD"/vpn-ipset-gen_*.conf.new; do
+    for f in "$DNSMASQ_CONFD"/vpn-nftset-gen_*.conf.new; do
         [ -f "$f" ] || continue
         newf=$(echo "$f" | sed 's/.conf.new/.conf/g')
         mv "$f" "$newf"
-        md5sum "$newf" | awk '{print $1}' >> "$DNSMASQ_CONFD/vpn-ipset-new.md5sum"
+        md5sum "$newf" | awk '{print $1}' >> "$DNSMASQ_CONFD/vpn-nftset-new.md5sum"
     done
     ret=0
-    if [ -f "$DNSMASQ_CONFD/vpn-ipset-old.md5sum" ]; then
-        md51=$(sort "$DNSMASQ_CONFD/vpn-ipset-old.md5sum" | md5sum | awk '{print $1}')
-        md52=$(sort "$DNSMASQ_CONFD/vpn-ipset-new.md5sum" | md5sum | awk '{print $1}')
+    if [ -f "$DNSMASQ_CONFD/vpn-nftset-old.md5sum" ]; then
+        md51=$(sort "$DNSMASQ_CONFD/vpn-nftset-old.md5sum" | md5sum | awk '{print $1}')
+        md52=$(sort "$DNSMASQ_CONFD/vpn-nftset-new.md5sum" | md5sum | awk '{print $1}')
         [ "$md51" != "$md52" ]
         ret=$?
     fi
-    rm -rf "$DNSMASQ_CONFD"/vpn-ipset-*.md5sum
+    rm -rf "$DNSMASQ_CONFD"/vpn-nftset-*.md5sum
     return "$ret"
 }
 
@@ -96,7 +96,7 @@ generate_from_gfwlist() {
     url=$1
     id=$(echo "$url" | md5sum | awk '{print $1}')
     rm -rf "$tmp_dir"
-    tmp_dir="/tmp/vpn-ipset-rulegenerator.GFW"
+    tmp_dir="/tmp/vpn-nftset-rulegenerator.GFW"
     mkdir -p $tmp_dir
 
     if command -v curl >/dev/null; then
@@ -127,7 +127,7 @@ generate_from_domainlist() {
     url=$1
     id=$(echo "$url" | md5sum | awk '{print $1}')
     rm -rf "$tmp_dir"
-    tmp_dir="/tmp/vpn-ipset-rulegenerator.N"
+    tmp_dir="/tmp/vpn-nftset-rulegenerator.N"
     mkdir -p $tmp_dir
 
     if command -v curl >/dev/null; then
@@ -166,10 +166,10 @@ while getopts ":w:u:i:s:d:f:h" arg; do
             fi
             ;;
         i)
-            if [ -n "$IPSET_NAMES" ]; then
-                IPSET_NAMES="$IPSET_NAMES,$OPTARG"
+            if [ -n "$NFTSET_NAMES" ]; then
+                NFTSET_NAMES="$NFTSET_NAMES,$OPTARG"
             else
-                IPSET_NAMES="$OPTARG"
+                NFTSET_NAMES="$OPTARG"
             fi
             ;;
         d)
@@ -188,8 +188,8 @@ if [ -z "${gfwlists}" ] && [ -z "${domainlists}" ]; then
     echo "GFWLists or domains list required"
     usage 1
 fi
-if [ -z "${IPSET_NAMES}" ]; then
-    echo "ipset name required"
+if [ -z "${NFTSET_NAMES}" ]; then
+    echo "nftset name required"
     usage 1
 fi
 if [ -n "${gfwlists}" ] && ! command -v base64 >/dev/null; then
