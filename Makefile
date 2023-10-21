@@ -18,7 +18,7 @@ define Package/luci-app-vpn-ipset
 	SUBMENU:=3. Applications
 	TITLE:=LuCI Support for IPset based VPN Routing Rules
 	PKGARCH:=all
-	DEPENDS:=+dnsmasq-full +coreutils-base64 +wget +ca-bundle +ca-certificates +libustream-wolfssl
+	DEPENDS:=+dnsmasq-full +coreutils-base64 +wget +ca-bundle +ca-certificates +libustream-mbedtls
 endef
 
 define Package/luci-app-vpn-ipset/description
