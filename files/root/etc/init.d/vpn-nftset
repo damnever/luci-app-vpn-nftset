@@ -146,8 +146,8 @@ setup_routetable() {
     cleanup_routetable
 
     nft add table inet $_FWMARK_TABLE
-    nft add set inet $_FWMARK_TABLE "${nftset_name}_v4" { type ipv4_addr \; }
-    nft add set inet $_FWMARK_TABLE "${nftset_name}_v6"  { type ipv6_addr \; }
+    nft add set inet $_FWMARK_TABLE "${nftset_name}_v4" { type ipv4_addr \; flags interval\; }
+    nft add set inet $_FWMARK_TABLE "${nftset_name}_v6"  { type ipv6_addr \; flags interval\; }
     nft add chain inet $_FWMARK_TABLE mangle_prerouting { type filter hook prerouting priority -150 \; policy accept \; }
     nft add chain inet $_FWMARK_TABLE mangle_output { type route hook output priority -150 \; policy accept \; }
     nft add rule inet $_FWMARK_TABLE mangle_prerouting ip daddr "@${nftset_name}_v4" counter meta mark set 0x7
