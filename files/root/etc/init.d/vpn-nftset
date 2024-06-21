@@ -1,6 +1,10 @@
 #!/bin/sh /etc/rc.common
 # vim: set ft=sh
 
+# We can use some built-in functions: https://openwrt.org/docs/guide-developer/config-scripting
+
+# shellcheck disable=SC3043
+
 # shellcheck disable=SC2034
 START=95
 STOP=15
@@ -16,6 +20,8 @@ fi
 _ROUTETABLE_FILE=/etc/iproute2/rt_tables
 _ROUTETABLE_PREFIX=vpnnftset_
 _FWMARK_TABLE=vpnnftset_fw
+
+config_load ${CONFIG_NAME}
 
 uci_get() {  # by section type
     ret=$(uci get "${CONFIG_NAME}.@${1}[0].${2}" 2>/dev/null)
@@ -126,36 +132,72 @@ setup_crontab() {
     $cmd  # run it
 }
 
-cleanup_routetable() {
-    nftset_name=$(uci_get "general" "nftset_name")
+
+
+decimal_to_hex() {
+    number=$1
+    hex=$(printf "%X\n" "$number")
+    echo "0x$hex"
+}
+
+
+
+cleanup_vpn_route() {
+    local section="$1"
+    local interface
+    local nftset_name
+    local meta_mark
+
+    config_get interface "$section" interface
+    config_get nftset_name "$section" nftset_name
+    config_get meta_mark "$section" meta_mark
+
+    # meta_mark_hex=$(decimal_to_hex "$meta_mark")
+
     if [ -n "$nftset_name" ]; then
         nft delete set inet $_FWMARK_TABLE "${nftset_name}_v4" 2>/dev/null
         nft delete set inet $_FWMARK_TABLE "${nftset_name}_v6" 2>/dev/null
     fi
-    nft delete table inet $_FWMARK_TABLE 2>/dev/null
-    ip rule del fwmark 7 2>/dev/null
-    sed -i "/${_ROUTETABLE_PREFIX}/d" $_ROUTETABLE_FILE
+    ip rule del fwmark "$meta_mark" 2>/dev/null
+    routetable="${_ROUTETABLE_PREFIX}${interface}"
+    sed -i "/${routetable}/d" $_ROUTETABLE_FILE
 }
 
-setup_routetable() {
-    nftset_name=$(uci_get "general" "nftset_name")
+setup_vpn_route() {
+    local section="$1"
+    local interface
+    local nftset_name
+    local meta_mark
+
+    config_get interface "$section" interface
+    config_get nftset_name "$section" nftset_name
+    config_get meta_mark "$section" meta_mark
+
+    meta_mark_hex=$(decimal_to_hex "$meta_mark")
+
     if [ -z "$nftset_name" ]; then
         echo "nftset_name not provided, skip.."
         return
     fi
-    cleanup_routetable
+    if [ -z "$meta_mark" ]; then
+        echo "meta_mark not provided, skip.."
+        return
+    fi
+    cleanup_vpn "$section"
 
-    nft add table inet $_FWMARK_TABLE
+    # shellcheck disable=SC1083
     nft add set inet $_FWMARK_TABLE "${nftset_name}_v4" { type ipv4_addr \; flags interval\; }
+    # shellcheck disable=SC1083
     nft add set inet $_FWMARK_TABLE "${nftset_name}_v6"  { type ipv6_addr \; flags interval\; }
+    # shellcheck disable=SC1083
     nft add chain inet $_FWMARK_TABLE mangle_prerouting { type filter hook prerouting priority -150 \; policy accept \; }
+    # shellcheck disable=SC1083
     nft add chain inet $_FWMARK_TABLE mangle_output { type route hook output priority -150 \; policy accept \; }
-    nft add rule inet $_FWMARK_TABLE mangle_prerouting ip daddr "@${nftset_name}_v4" counter meta mark set 0x7
-    nft add rule inet $_FWMARK_TABLE mangle_output ip daddr "@${nftset_name}_v4" counter meta mark set 0x7
-    nft add rule inet $_FWMARK_TABLE mangle_prerouting ip6 daddr "@${nftset_name}_v6" counter meta mark set 0x7
-    nft add rule inet $_FWMARK_TABLE mangle_output ip6 daddr "@${nftset_name}_v6" counter meta mark set 0x7
+    nft add rule inet $_FWMARK_TABLE mangle_prerouting ip daddr "@${nftset_name}_v4" counter meta mark set "$meta_mark_hex"
+    nft add rule inet $_FWMARK_TABLE mangle_output ip daddr "@${nftset_name}_v4" counter meta mark set "$meta_mark_hex"
+    nft add rule inet $_FWMARK_TABLE mangle_prerouting ip6 daddr "@${nftset_name}_v6" counter meta mark set "$meta_mark_hex"
+    nft add rule inet $_FWMARK_TABLE mangle_output ip6 daddr "@${nftset_name}_v6" counter meta mark set "$meta_mark_hex"
 
-    interface=$(uci_get "general" "interface")
     if [ -z "$interface" ] || [ "$interface" = "_nil_" ]; then
         return
     fi
@@ -170,12 +212,26 @@ setup_routetable() {
             break
         fi
     done
-    ip rule add fwmark 7 table "$routetable"
+    ip rule add fwmark "$meta_mark" table "$routetable"
     ip route add default via "$ipaddr" dev "$interface" table "$routetable"
     if [ -n "${ip6addr}" ]; then
-        ip -6 rule add fwmark 7 table "$routetable"
+        ip -6 rule add fwmark "$meta_mark" table "$routetable"
         ip -6 route add default via "$ip6addr" dev "$interface" table "$routetable"
     fi
+}
+
+cleanup_routetable() {
+    config_foreach cleanup_vpn_route vpn
+
+    nft delete table inet $_FWMARK_TABLE 2>/dev/null
+}
+
+setup_routetable() {
+    cleanup_routetable
+
+    nft add table inet $_FWMARK_TABLE
+
+    config_foreach setup_vpn_route vpn
 }
 
 restart_dnsmasq() {
