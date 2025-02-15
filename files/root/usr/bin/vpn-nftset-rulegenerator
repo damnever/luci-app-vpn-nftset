@@ -24,6 +24,7 @@ fi
 DNS_SERVERS=""
 NFTSET_NAMES=""
 DNSMASQ_CONFD="/tmp/dnsmasq.d"
+BACKUP_CONFD="/var/tmp/luci-app-vpn-nftset-dnsmasq.d"
 _SED_PATTERN_TIDY=""
 
 
@@ -69,6 +70,10 @@ apply_domains() {
 }
 
 replacedall() {
+    if ! find "$DNSMASQ_CONFD" -maxdepth 1 -name "vpn-nftset-gen_*.conf.new" -type f | grep -q .; then
+        return 1
+    fi
+
     for f in "$DNSMASQ_CONFD"/vpn-nftset-gen_*.conf; do
         [ -f "$f" ] || continue
         md5sum "$f" | awk '{print $1}' >> "$DNSMASQ_CONFD/vpn-nftset-old.md5sum"
@@ -123,6 +128,18 @@ generate_from_gfwlist() {
     rm -rf "$tmp_dir"
 }
 
+restore_confs() {
+    if find "$DNSMASQ_CONFD" -maxdepth 1 -name "vpn-nftset-gen_*.conf" -type f | grep -q .; then
+        return 1
+    fi
+    cp "$BACKUP_CONFD"/vpn-nftset-gen_*.conf "$DNSMASQ_CONFD"
+    return 0
+}
+
+backup_confs() {
+    cp "$DNSMASQ_CONFD"/vpn-nftset-gen_*.conf "$BACKUP_CONFD"
+}
+
 generate_from_domainlist() {
     url=$1
     id=$(echo "$url" | md5sum | awk '{print $1}')
@@ -138,7 +155,6 @@ generate_from_domainlist() {
     apply_domains "$tmp_dir/domains.txt" "$id"
     rm -rf "$tmp_dir"
 }
-
 
 gfwlists=""
 domainlists=""
@@ -196,9 +212,14 @@ if [ -n "${gfwlists}" ] && ! command -v base64 >/dev/null; then
     echo "base64 command not found, (e.g. openwrt: opkg install coreutils-base64)"
 fi
 
+mkdir -p "$DNSMASQ_CONFD"
+mkdir -p "$BACKUP_CONFD"
+
+restore_confs
+restored=$?
+
 generate_sed_tidy_pattern_from_config_file
 echo "sed pattern with existing domains: $_SED_PATTERN_TIDY"
-mkdir -p "$DNSMASQ_CONFD"
 IFS=' '
 for url in ${gfwlists}; do
     echo "processing GFWList: $url"
@@ -208,7 +229,12 @@ for url in ${domainlists}; do
     echo "processing DomainList: $url"
     generate_from_domainlist "$url"
 done
-if replacedall; then
+
+replacedall
+replaced=$?
+
+if [ "$restored" -eq 0 ] || [ "$replaced" -eq 0 ]; then
+    backup_confs
     echo "reload dnsmasq"
     /etc/init.d/dnsmasq restart > /dev/null 2>&1
 fi
