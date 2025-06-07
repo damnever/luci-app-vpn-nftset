@@ -134,6 +134,7 @@ cleanup_routetable() {
     fi
     nft delete table inet $_FWMARK_TABLE 2>/dev/null
     ip rule del fwmark 7 2>/dev/null
+    ip -6 rule del fwmark 7 2>/dev/null
     sed -i "/${_ROUTETABLE_PREFIX}/d" $_ROUTETABLE_FILE
 }
 
@@ -171,10 +172,11 @@ setup_routetable() {
         fi
     done
     ip rule add fwmark 7 table "$routetable"
-    ip route add default via "$ipaddr" dev "$interface" table "$routetable"
+    ip route add default dev "$interface" table "$routetable"
+
     if [ -n "${ip6addr}" ]; then
         ip -6 rule add fwmark 7 table "$routetable"
-        ip -6 route add default via "$ip6addr" dev "$interface" table "$routetable"
+        ip -6 route add default dev "$interface" table "$routetable"
     fi
 }
 
