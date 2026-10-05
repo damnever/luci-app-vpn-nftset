@@ -1,0 +1,11 @@
+{
+    "luci-app-vpn-nftset": {
+        "description": "Manage VPN NFTset domain and IP routing rules",
+        "read": {
+            "uci": ["vpn-nftset", "network"]
+        },
+        "write": {
+            "uci": ["vpn-nftset"]
+        }
+    }
+}

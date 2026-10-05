@@ -1,242 +1,202 @@
 #!/bin/sh
 
 usage() {
-    cat <<-EOF
-Usage: $0 [OPTIONS]
-
-OPTIONS:
-    -w <gfwlist_url>       the GFWList url.
-    -u <domainlist_url>    the domain list url, format: one domain for line.
-    -s <dns_server>        the DNS server.
-    -i <nftsets>           the nftset for dnsmasq, e.g. 4#inet#table#nftset_name.
-    -d <dnsmasq_conf.d>    the dnsmasq config directory.
-    -h                     print this message.
+    cat <<EOF
+Usage: $0 [-w GFWList-URL] [-u domain-list-URL] [-s DNS-IP[#port]] -i nftset [-d dnsmasq-directory]
+          [-c cache-directory] [-r runtime-directory] [-o] [-n]
+  -w, -u  May be repeated. Plain lists contain one domain per line.
+  -s, -i  May be repeated. DNS is optional; nftsets are required.
+  -c      Persistent source cache (default /etc/vpn-nftset).
+  -r      Temporary update state (default /tmp/vpn-nftset).
+  -o      Render cached sources without downloading.
+  -n      Leave dnsmasq restart to the caller.
 EOF
     exit "$1"
 }
 
-BASE64_DECODE_CMD="base64 -d"
-SED_ERES="sed -r"
-if [ "$(uname -s)" = "Darwin" ]; then
-    BASE64_DECODE_CMD="base64 -D -i"
-    echo "NOTE: brew install gnu-sed; brew info gnu-sed"
-fi
-DNS_SERVERS=""
-NFTSET_NAMES=""
-DNSMASQ_CONFD="/tmp/dnsmasq.d"
-BACKUP_CONFD="/var/tmp/luci-app-vpn-nftset-dnsmasq.d"
-_SED_PATTERN_TIDY=""
+DNSMASQ_CONFD=/tmp/dnsmasq.d
+CACHE_DIR=/etc/vpn-nftset
+RUNTIME_DIR=/tmp/vpn-nftset
+DATA_TOOL=${VPN_NFTSET_DATA_TOOL:-${VPN_NFTSET_DATA:-/usr/bin/vpn-nftset-data}}
+LUA=${VPN_NFTSET_LUA:-lua}
+DNSMASQ_INIT=${VPN_NFTSET_DNSMASQ_INIT:-/etc/init.d/dnsmasq}
+sources=""
+dns_servers=""
+nftsets=""
+offline=0
+no_restart=0
+tab=$(printf '\t')
+newline='
+'
 
-
-generate_sed_tidy_pattern_from_config_file() {
-    tmpfile=$(mktemp)
-    for file in "$DNSMASQ_CONFD"/vpn-nftset*.conf; do
-        case "$file" in
-            "$DNSMASQ_CONFD"/vpn-nftset-gen_*.conf) continue ;;
-        esac
-        while IFS= read -r line; do
-            part=$(echo "$line" | awk -F'=' '{print $2}')
-            domain=$(echo "$part" | awk -F'/' '{print $2}')
-            echo "$domain" >> "$tmpfile"
-        done < "$file"
-    done
-
-    if [ -s "$tmpfile" ]; then
-        _custom_domains=$(sort < "$tmpfile" | uniq | tr '\n' '|' | sed 's/\./\\./g')
-        _suffix="|"
-        _custom_domains="${_custom_domains%"$_suffix"}"
-
-        _SED_PATTERN_TIDY="/^(server=\/|nftset=\/).*?($_custom_domains)\//d"
-    fi
-    rm "$tmpfile"
-}
-
-
-apply_domains() {
-    infile=$1
-    outfile="$DNSMASQ_CONFD/vpn-nftset-gen_$2.conf.new"
-    if [ -n "$DNS_SERVERS" ]; then
-        grep -v '^ *#' < "$infile" | while IFS= read -r domain; do
-            if [ -n "$DNS_SERVERS" ]; then
-                echo "server=/${domain}/${DNS_SERVERS}" >> "${outfile}"
-            fi
-            echo "nftset=/${domain}/${NFTSET_NAMES}" >> "${outfile}"
-        done
-    fi
-
-    if [ -n "$_SED_PATTERN_TIDY" ]; then
-        ${SED_ERES} -i "$_SED_PATTERN_TIDY" "$outfile"
-    fi
-}
-
-replacedall() {
-    if ! find "$DNSMASQ_CONFD" -maxdepth 1 -name "vpn-nftset-gen_*.conf.new" -type f | grep -q .; then
-        return 1
-    fi
-
-    for f in "$DNSMASQ_CONFD"/vpn-nftset-gen_*.conf; do
-        [ -f "$f" ] || continue
-        md5sum "$f" | awk '{print $1}' >> "$DNSMASQ_CONFD/vpn-nftset-old.md5sum"
-    done
-    rm -rf "$DNSMASQ_CONFD"/vpn-nftset-gen_*.conf.old
-
-    for f in "$DNSMASQ_CONFD"/vpn-nftset-gen_*.conf.new; do
-        [ -f "$f" ] || continue
-        newf=$(echo "$f" | sed 's/.conf.new/.conf/g')
-        mv "$f" "$newf"
-        md5sum "$newf" | awk '{print $1}' >> "$DNSMASQ_CONFD/vpn-nftset-new.md5sum"
-    done
-    ret=0
-    if [ -f "$DNSMASQ_CONFD/vpn-nftset-old.md5sum" ]; then
-        md51=$(sort "$DNSMASQ_CONFD/vpn-nftset-old.md5sum" | md5sum | awk '{print $1}')
-        md52=$(sort "$DNSMASQ_CONFD/vpn-nftset-new.md5sum" | md5sum | awk '{print $1}')
-        [ "$md51" != "$md52" ]
-        ret=$?
-    fi
-    rm -rf "$DNSMASQ_CONFD"/vpn-nftset-*.md5sum
-    return "$ret"
-}
-
-generate_from_gfwlist() {
-    url=$1
-    id=$(echo "$url" | md5sum | awk '{print $1}')
-    rm -rf "$tmp_dir"
-    tmp_dir="/tmp/vpn-nftset-rulegenerator.GFW"
-    mkdir -p $tmp_dir
-
-    if command -v curl >/dev/null; then
-        curl -s -L "$url" -o "$tmp_dir/gfwlist.txt" || return
-    else
-        wget -q "$url" -O "$tmp_dir/gfwlist.txt" || return
-    fi
-    $BASE64_DECODE_CMD "$tmp_dir/gfwlist.txt" > "$tmp_dir/decoded.txt"
-    # Ref: https://github.com/cokebar/gfwlist2dnsmasq/blob/3b5e3560ede7d1b0a1d02157576822752c48e671/gfwlist2dnsmasq.sh#L242
-    IGNORE_PATTERN='^\!|\[|^@@|(https?://){0,1}[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'
-    HEAD_FILTER_PATTERN='s#^(\|\|?)?(https?://+)?##g'
-    TAIL_FILTER_PATTERN='s#/.*$|%2F.*$##g'
-    DOMAIN_PATTERN='([a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)+)'
-    HANDLE_WILDCARD_PATTERN='s#^(([a-zA-Z0-9]*\*[-a-zA-Z0-9]*)?(\.))?([a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)+)(\*[a-zA-Z0-9]*)?#\4#g'
-    # shellcheck disable=SC2086
-    grep -vE $IGNORE_PATTERN "$tmp_dir/decoded.txt" \
-        | $SED_ERES $HEAD_FILTER_PATTERN \
-        | $SED_ERES $TAIL_FILTER_PATTERN \
-        | grep -E $DOMAIN_PATTERN \
-        | $SED_ERES $HANDLE_WILDCARD_PATTERN \
-        | sort -u > "$tmp_dir/domains.txt"
-
-    apply_domains "$tmp_dir/domains.txt" "$id"
-    rm -rf "$tmp_dir"
-}
-
-restore_confs() {
-    if find "$DNSMASQ_CONFD" -maxdepth 1 -name "vpn-nftset-gen_*.conf" -type f | grep -q .; then
-        return 1
-    fi
-    cp "$BACKUP_CONFD"/vpn-nftset-gen_*.conf "$DNSMASQ_CONFD"
-    return 0
-}
-
-backup_confs() {
-    cp "$DNSMASQ_CONFD"/vpn-nftset-gen_*.conf "$BACKUP_CONFD"
-}
-
-generate_from_domainlist() {
-    url=$1
-    id=$(echo "$url" | md5sum | awk '{print $1}')
-    rm -rf "$tmp_dir"
-    tmp_dir="/tmp/vpn-nftset-rulegenerator.N"
-    mkdir -p $tmp_dir
-
-    if command -v curl >/dev/null; then
-        curl -s -L "$url" -o "$tmp_dir/domains.txt" || return
-    else
-        wget -q "$url" -O "$tmp_dir/domains.txt" || return
-    fi
-    apply_domains "$tmp_dir/domains.txt" "$id"
-    rm -rf "$tmp_dir"
-}
-
-gfwlists=""
-domainlists=""
-while getopts ":w:u:i:s:d:f:h" arg; do
-    case "$arg" in
-        w)
-            if [ -n "$gfwlists" ]; then
-                gfwlists="$gfwlists $OPTARG"
-            else
-                gfwlists="$OPTARG"
-            fi
+while getopts ':w:u:s:i:d:c:r:onh' option; do
+    case "$option" in
+        w|u)
+            case "$OPTARG" in
+                *[[:space:]]*|http://|https://) echo 'Invalid source URL' >&2; exit 1 ;;
+                http://*|https://*) ;;
+                *) echo 'Source URLs must use HTTP or HTTPS' >&2; exit 1 ;;
+            esac
+            kind=plain
+            [ "$option" = w ] && kind=gfw
+            sources="${sources}${kind}${tab}${OPTARG}${newline}"
             ;;
-        u)
-            if [ -n "$domainlists" ]; then
-                domainlists="$domainlists $OPTARG"
-            else
-                domainlists="$OPTARG"
-            fi
-            ;;
-        s)
-            if [ -n "$DNS_SERVERS" ]; then
-                DNS_SERVERS="$DNS_SERVERS,$OPTARG"
-            else
-                DNS_SERVERS="$OPTARG"
-            fi
-            ;;
-        i)
-            if [ -n "$NFTSET_NAMES" ]; then
-                NFTSET_NAMES="$NFTSET_NAMES,$OPTARG"
-            else
-                NFTSET_NAMES="$OPTARG"
-            fi
-            ;;
-        d)
-            DNSMASQ_CONFD=$OPTARG
-            ;;
-        h)
-            usage 0
-            ;;
-        *)
-            usage 1
-            ;;
+        s) dns_servers="${dns_servers}${OPTARG}${newline}" ;;
+        i) nftsets="${nftsets:+$nftsets,}${OPTARG}" ;;
+        d) DNSMASQ_CONFD=$OPTARG ;;
+        c) CACHE_DIR=$OPTARG ;;
+        r) RUNTIME_DIR=$OPTARG ;;
+        o) offline=1 ;;
+        n) no_restart=1 ;;
+        h) usage 0 ;;
+        *) usage 1 ;;
     esac
 done
+shift $((OPTIND - 1))
+if [ "$#" -ne 0 ] || [ -z "$nftsets" ]; then usage 1; fi
 
-if [ -z "${gfwlists}" ] && [ -z "${domainlists}" ]; then
-    echo "GFWLists or domains list required"
-    usage 1
+mkdir -p "$DNSMASQ_CONFD" "$CACHE_DIR" "$RUNTIME_DIR" || exit 1
+lockdir="$RUNTIME_DIR/update.lock"
+if ! mkdir "$lockdir" 2>/dev/null; then
+    owner=$(cat "$lockdir/pid" 2>/dev/null)
+    case "$owner" in
+        ''|*[!0-9]*) echo 'A domain update is already running' >&2; exit 1 ;;
+    esac
+    if kill -0 "$owner" 2>/dev/null || ! mkdir "$lockdir/recovery" 2>/dev/null; then
+        echo 'A domain update is already running' >&2
+        exit 1
+    fi
+    # Only one contender can claim recovery inside the old lock. Recheck its
+    # owner before removing it so another process's fresh lock is never stolen.
+    if [ "$(cat "$lockdir/pid" 2>/dev/null)" != "$owner" ] || kill -0 "$owner" 2>/dev/null; then
+        rmdir "$lockdir/recovery" 2>/dev/null
+        echo 'A domain update is already running' >&2
+        exit 1
+    fi
+    rm -rf "$lockdir"
+    mkdir "$lockdir" 2>/dev/null || exit 1
 fi
-if [ -z "${NFTSET_NAMES}" ]; then
-    echo "nftset name required"
-    usage 1
+printf '%s\n' "$$" > "$lockdir/pid" || exit 1
+workdir=$(mktemp -d "$RUNTIME_DIR/domains.XXXXXX") || { rm -rf "$lockdir"; exit 1; }
+trap 'rm -rf "$workdir"; if [ "$(cat "$lockdir/pid" 2>/dev/null)" = "$$" ]; then rm -rf "$lockdir"; fi' EXIT
+trap 'exit 1' HUP INT TERM
+
+printf '%s' "$sources" > "$workdir/sources.input"
+printf '%s' "$dns_servers" > "$workdir/dns.input"
+: > "$workdir/custom.input"
+# Validate DNS and nftset inputs before changing any cache.
+"$LUA" "$DATA_TOOL" generate-custom "$workdir/custom.input" "$workdir/dns.input" "$nftsets" "$workdir/empty.conf" || exit 1
+
+download() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -f -s -S -L --connect-timeout 10 --max-time 60 "$1" -o "$2"
+    elif command -v uclient-fetch >/dev/null 2>&1; then
+        uclient-fetch -q -T 60 "$1" -O "$2"
+    else
+        wget -q -T 60 -t 1 "$1" -O "$2"
+    fi
+}
+
+replace_changed() {
+    if [ ! -f "$2" ] || ! cmp -s "$1" "$2"; then
+        # A destination sibling keeps replacement atomic across filesystems.
+        # Unchanged lists avoid writes to the router's persistent flash.
+        cp "$1" "$2.new" && mv "$2.new" "$2"
+    fi
+}
+
+check_cancelled() {
+    if [ -n "${VPN_NFTSET_CANCEL_FILE:-}" ] && [ -f "$VPN_NFTSET_CANCEL_FILE" ]; then
+        echo 'Domain update cancelled by a service configuration change' >&2
+        exit 1
+    fi
+}
+
+: > "$workdir/sources.tsv"
+: > "$workdir/domains.all"
+failed=0
+while IFS="$tab" read -r kind url; do
+    [ -n "$url" ] || continue
+    check_cancelled
+    id=$(printf '%s' "$url" | md5sum | awk '{print $1}')
+    if awk -F '\t' -v id="$id" '$2 == id { found = 1 } END { exit !found }' "$workdir/sources.tsv"; then
+        continue
+    fi
+    printf '%s\t%s\t%s\n' "$kind" "$id" "$url" >> "$workdir/sources.tsv"
+    if [ ! -f "$CACHE_DIR/$id.domains" ]; then
+        legacy_id=$(printf '%s\n' "$url" | md5sum | awk '{print $1}')
+        legacy_conf="$DNSMASQ_CONFD/vpn-nftset-gen_$legacy_id.conf"
+        if [ -f "$legacy_conf" ]; then
+            awk -F '/' '/^nftset=\// { print $2 }' "$legacy_conf" > "$workdir/legacy.input"
+            if "$LUA" "$DATA_TOOL" parse-domains plain "$workdir/legacy.input" "$workdir/legacy.parsed"; then
+                replace_changed "$workdir/legacy.parsed" "$CACHE_DIR/$id.domains" || exit 1
+            fi
+        fi
+    fi
+    if [ "$offline" -eq 0 ]; then
+        status=ok
+        if ! download "$url" "$workdir/download"; then
+            status=download_failed
+        else
+            input="$workdir/download"
+            if [ "$kind" = gfw ]; then
+                input="$workdir/decoded"
+                if ! base64 -d < "$workdir/download" > "$input" 2>/dev/null; then
+                    status=invalid_data
+                fi
+            fi
+            if [ "$status" = ok ] && ! "$LUA" "$DATA_TOOL" parse-domains "$kind" "$input" "$workdir/parsed"; then
+                status=invalid_data
+            fi
+        fi
+        check_cancelled
+        if [ "$status" = ok ]; then
+            replace_changed "$workdir/parsed" "$CACHE_DIR/$id.domains" || exit 1
+            date +%s > "$workdir/success"
+            replace_changed "$workdir/success" "$CACHE_DIR/$id.success" || exit 1
+        else
+            failed=1
+            echo "Domain source update failed ($status): $url; retaining previous cache" >&2
+        fi
+        printf '%s\n' "$status" > "$workdir/status"
+        replace_changed "$workdir/status" "$RUNTIME_DIR/$id.status" || exit 1
+    fi
+    if [ -f "$CACHE_DIR/$id.domains" ]; then
+        if "$LUA" "$DATA_TOOL" parse-domains plain "$CACHE_DIR/$id.domains" "$workdir/cached"; then
+            cat "$workdir/cached" >> "$workdir/domains.all"
+        else
+            failed=1
+            echo "Invalid cached domain source: $url" >&2
+        fi
+    fi
+done < "$workdir/sources.input"
+check_cancelled
+replace_changed "$workdir/sources.tsv" "$CACHE_DIR/sources.tsv" || exit 1
+sort -u "$workdir/domains.all" > "$workdir/domains.unique"
+
+# Suppress exact custom duplicates. Retain a downloaded child of a custom parent:
+# dnsmasq gives that more specific child its own configured upstream DNS.
+: > "$workdir/custom.domains"
+if [ -f "$DNSMASQ_CONFD/vpn-nftset-domains.conf" ]; then
+    awk -F '/' '/^(server|nftset)=\// { print tolower($2) }' "$DNSMASQ_CONFD/vpn-nftset-domains.conf" | sort -u > "$workdir/custom.domains"
 fi
-if [ -n "${gfwlists}" ] && ! command -v base64 >/dev/null; then
-    echo "base64 command not found, (e.g. openwrt: opkg install coreutils-base64)"
+awk 'FILENAME == ARGV[1] { custom[$0] = 1; next } !custom[$0]' "$workdir/custom.domains" "$workdir/domains.unique" > "$workdir/effective.domains"
+
+"$LUA" "$DATA_TOOL" generate-custom "$workdir/effective.domains" "$workdir/dns.input" "$nftsets" "$workdir/generated.conf" || exit 1
+
+changed=0
+outfile="$DNSMASQ_CONFD/vpn-nftset-generated.conf"
+check_cancelled
+if [ ! -f "$outfile" ] || ! cmp -s "$workdir/generated.conf" "$outfile"; then
+    replace_changed "$workdir/generated.conf" "$outfile" || exit 1
+    changed=1
 fi
-
-mkdir -p "$DNSMASQ_CONFD"
-mkdir -p "$BACKUP_CONFD"
-
-restore_confs
-restored=$?
-
-generate_sed_tidy_pattern_from_config_file
-echo "sed pattern with existing domains: $_SED_PATTERN_TIDY"
-IFS=' '
-for url in ${gfwlists}; do
-    echo "processing GFWList: $url"
-    generate_from_gfwlist "$url"
+for file in "$DNSMASQ_CONFD"/vpn-nftset-gen_*.conf; do
+    [ -f "$file" ] || continue
+    rm "$file" || exit 1
+    changed=1
 done
-for url in ${domainlists}; do
-    echo "processing DomainList: $url"
-    generate_from_domainlist "$url"
-done
-
-replacedall
-replaced=$?
-
-if [ "$restored" -eq 0 ] || [ "$replaced" -eq 0 ]; then
-    backup_confs
-    echo "reload dnsmasq"
-    /etc/init.d/dnsmasq restart > /dev/null 2>&1
+if [ "$changed" -eq 1 ] && [ "$no_restart" -eq 0 ]; then
+    "$DNSMASQ_INIT" restart || exit 1
 fi
-
-# vim: set ft=sh
+exit "$failed"

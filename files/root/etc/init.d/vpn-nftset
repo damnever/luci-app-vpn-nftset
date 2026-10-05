@@ -4,223 +4,413 @@
 # shellcheck disable=SC2034
 START=95
 STOP=15
-EXTRA_COMMANDS=delayed_reload
+EXTRA_COMMANDS="delayed_reload update"
 
 CONFIG_NAME=vpn-nftset
-_DNSMASQ_CONFD=/tmp/dnsmasq.d  # See /tmp/etc/dnsmasq.conf.xxx
-mkdir -p "$_DNSMASQ_CONFD"
-_CRONTAB_FILE=/etc/crontabs/root
-if [ ! -f $_CRONTAB_FILE ]; then
-    touch $_CRONTAB_FILE
-fi
-_ROUTETABLE_FILE=/etc/iproute2/rt_tables
+_DNSMASQ_CONFD=${VPN_NFTSET_DNSMASQ_DIR:-/tmp/dnsmasq.d}
+_CACHE_DIR=${VPN_NFTSET_CACHE_DIR:-/etc/vpn-nftset}
+_RUNTIME_DIR=${VPN_NFTSET_RUNTIME_DIR:-/tmp/vpn-nftset}
+_CRONTAB_FILE=${VPN_NFTSET_CRONTAB_FILE:-/etc/crontabs/root}
+_ROUTETABLE_FILE=${VPN_NFTSET_ROUTETABLE_FILE:-/etc/iproute2/rt_tables}
+_DNSMASQ_SERVICE=${VPN_NFTSET_DNSMASQ_SERVICE:-/etc/init.d/dnsmasq}
+_CRON_SERVICE=${VPN_NFTSET_CRON_SERVICE:-/etc/init.d/cron}
+_GENERATOR=${VPN_NFTSET_GENERATOR:-/usr/bin/vpn-nftset-rulegenerator}
+_UPDATER=${VPN_NFTSET_UPDATER:-/usr/bin/vpn-nftset-update}
+_DATA_TOOL=${VPN_NFTSET_DATA_TOOL:-/usr/bin/vpn-nftset-data}
+_LUA=${VPN_NFTSET_LUA:-lua}
+_TELEGRAM_SEED=${VPN_NFTSET_TELEGRAM_SEED:-/usr/share/vpn-nftset/telegram-cidr.txt}
 _ROUTETABLE_PREFIX=vpnnftset_
 _FWMARK_TABLE=vpnnftset_fw
 
-uci_get() {  # by section type
-    ret=$(uci get "${CONFIG_NAME}.@${1}[0].${2}" 2>/dev/null)
-    echo "${ret:=$3}"
+uci_get() {
+    uci_value=$(uci get "${CONFIG_NAME}.@${1}[0].${2}" 2>/dev/null)
+    printf '%s\n' "${uci_value:-$3}"
 }
 
 uci_get_bool() {
-    case "$(uci_get "$1" "$2")" in
-        1|on|true|yes|enabled) return 0;;
+    case "$(uci_get "$1" "$2" "$3")" in
+        1|on|true|yes|enabled) return 0 ;;
     esac
     return 1
 }
 
-nftset_add_addresses() {
-    nftset_name=$(uci_get "general" "nftset_name")
-    for ip in $(uci_get "general" "ip_addresses"); do
-        # shellcheck disable=SC1083
-        nft add element inet ${_FWMARK_TABLE} "${nftset_name}_v4" { "$ip" } 2>/dev/null || true
-        # shellcheck disable=SC1083
-        nft add element inet ${_FWMARK_TABLE} "${nftset_name}_v6" { "$ip" } 2>/dev/null || true
-    done
+data_tool() {
+    "$_LUA" "$_DATA_TOOL" "$@"
 }
 
-generate_dnsmasq_conf() {
-    outfile=$1
+refresh_status() {
+    printf '%s\n' "$1" > "$service_work/refresh.status"
+    mv "$service_work/refresh.status" "$_RUNTIME_DIR/refresh.status"
+}
 
-    nftset_name=$(uci_get "general" "nftset_name")
-    nftsets="4#inet#${_FWMARK_TABLE}#${nftset_name}_v4,6#inet#${_FWMARK_TABLE}#${nftset_name}_v6"
-
-    dnsservers=""
-    for server in $(uci_get "dnsmasq_nftset" "dns_servers"); do
-        # server=$(echo "$server" | sed 's/:/#/g')
-        if [ -z "$dnsservers" ]; then
-            dnsservers="$server"
-        else
-            dnsservers="$dnsservers,$server"
+release_service_lock() {
+    if [ "$(cat "$service_lock/pid" 2>/dev/null)" = "$$" ]; then
+        if [ -n "$service_work" ] && [ "$service_mode" = update ] && \
+            [ "$(cat "$_RUNTIME_DIR/refresh.status" 2>/dev/null)" = running ]; then
+            refresh_status failed
         fi
-    done
+        rm -f "$_RUNTIME_DIR/cancel-update"
+        rm -rf "$service_lock"
+    fi
+    rm -rf "$service_work"
+}
 
-    newoutfile="${outfile}.new"
-    for domain in $(uci_get "dnsmasq_nftset" "domains"); do
-        case "${domain}" in
-        */*)
-            domain_nameserver=$domain
-            domain=$(echo "$domain_nameserver" | awk -F'/' '{print $1}')
-            nameserver=$(echo "$domain_nameserver" | awk -F'/' '{print $2}')
-            echo "server=/${domain}/${nameserver}" >> "${newoutfile}"
-            echo "nftset=/${domain}/${nftsets}" >> "${newoutfile}"
-            ;;
-        *  )
-            if [ -n "$dnsservers" ]; then
-                echo "server=/${domain}/${dnsservers}" >> "${newoutfile}"
-            fi
-            echo "nftset=/${domain}/${nftsets}" >> "${newoutfile}"
-            ;;
+# Lifecycle and refresh share a lock so a download cannot apply after stop.
+with_service_lock() {
+    service_wait=$1
+    shift
+    mkdir -p "$_RUNTIME_DIR" "$_CACHE_DIR" "$_DNSMASQ_CONFD" || return 1
+    service_lock="$_RUNTIME_DIR/service.lock"
+    service_attempt=0
+    while ! mkdir "$service_lock" 2>/dev/null; do
+        service_pid=$(cat "$service_lock/pid" 2>/dev/null)
+        case "$service_pid" in
+            ''|*[!0-9]*) service_pid= ;;
         esac
+        if [ -n "$service_pid" ] && ! kill -0 "$service_pid" 2>/dev/null && \
+            mkdir "$service_lock/recovery" 2>/dev/null; then
+            if [ "$(cat "$service_lock/pid" 2>/dev/null)" = "$service_pid" ] && \
+                ! kill -0 "$service_pid" 2>/dev/null; then
+                rm -rf "$service_lock"
+                continue
+            fi
+            rmdir "$service_lock/recovery" 2>/dev/null || true
+        fi
+        if [ "$service_wait" = wait ] && [ "$(cat "$service_lock/mode" 2>/dev/null)" = update ]; then
+            : > "$_RUNTIME_DIR/cancel-update"
+        fi
+        if [ "$service_wait" != wait ] || [ "$service_attempt" -ge 90 ]; then
+            echo 'VPN NFTset is busy'
+            return 1
+        fi
+        service_attempt=$((service_attempt + 1))
+        sleep 1
     done
-    ret=0
-    if [ -f "$outfile" ]; then
-        md51=$(sort "$outfile" | md5sum | awk '{print $1}')
-        md52=$(sort "$newoutfile" | md5sum | awk '{print $1}')
-        [ "$md51" != "$md52" ]
-        ret=$?
+    printf '%s\n' "$$" > "$service_lock/pid"
+    service_mode=lifecycle
+    [ "$1" = update_locked ] && service_mode=update
+    printf '%s\n' "$service_mode" > "$service_lock/mode"
+    rm -f "$_RUNTIME_DIR/cancel-update"
+    service_work=
+    service_work=$(mktemp -d "$_RUNTIME_DIR/service.XXXXXX") || {
+        release_service_lock
+        return 1
+    }
+    trap release_service_lock EXIT
+    trap 'exit 1' HUP INT TERM
+    if [ "$service_mode" = update ]; then
+        refresh_status running
     fi
-    mv "$newoutfile" "$outfile"
-    return "$ret"
-}
-
-cleanup_crontab() {
-    sed -i '/vpn-nftset-rulegenerator/d' $_CRONTAB_FILE
-}
-
-setup_crontab() {
-    nftset_name=$(uci_get "general" "nftset_name")
-    nftsetopts="-i 4#inet#${_FWMARK_TABLE}#${nftset_name}_v4 -i 6#inet#${_FWMARK_TABLE}E#${nftset_name}_v6"
-
-    dnsserveropts=""
-    for server in $(uci_get "dnsmasq_nftset" "dns_servers"); do
-        # server=$(echo "$server" | sed 's/:/#/g')
-        if [ -z "$dnsserveropts" ]; then
-            dnsserveropts="-s $server"
+    "$@"
+    service_result=$?
+    if [ "$service_mode" = update ]; then
+        if [ -e "$_RUNTIME_DIR/cancel-update" ]; then
+            refresh_status cancelled
+        elif [ "$service_result" -eq 0 ]; then
+            refresh_status ok
         else
-            dnsserveropts="$dnsserveropts -s $server"
+            refresh_status failed
         fi
-    done
-
-    gfwlistopts=""
-    for gfwlist in $(uci_get "dnsmasq_nftset" "gfwlist_urls"); do
-        if [ -z "$gfwlistopts" ]; then
-            gfwlistopts="-w $gfwlist"
-        else
-            gfwlistopts="$gfwlistopts -w $gfwlist"
-        fi
-    done
-
-    domainlistopts=""
-    for domainlist in $(uci_get "dnsmasq_nftset" "domainslist_urls"); do
-        if [ -z "$domainlistopts" ]; then
-            domainlistopts="-u $domainlist"
-        else
-            domainlistopts="$domainlistopts -u $domainlist"
-        fi
-    done
-
-    cleanup_crontab
-    cmd="/usr/bin/vpn-nftset-rulegenerator -d $_DNSMASQ_CONFD $gfwlistopts $nftsetopts $dnsserveropts $domainlistopts"
-    echo "4 4 * * * $cmd" >> $_CRONTAB_FILE
-    $cmd  # run it
+    fi
+    release_service_lock
+    trap - EXIT HUP INT TERM
+    return "$service_result"
 }
 
-cleanup_routetable() {
-    nftset_name=$(uci_get "general" "nftset_name")
-    if [ -n "$nftset_name" ]; then
-        nft delete set inet $_FWMARK_TABLE "${nftset_name}_v4" 2>/dev/null
-        nft delete set inet $_FWMARK_TABLE "${nftset_name}_v6" 2>/dev/null
-    fi
-    nft delete table inet $_FWMARK_TABLE 2>/dev/null
-    ip rule del fwmark 7 2>/dev/null
-    ip -6 rule del fwmark 7 2>/dev/null
-    sed -i "/${_ROUTETABLE_PREFIX}/d" $_ROUTETABLE_FILE
-}
-
-setup_routetable() {
-    nftset_name=$(uci_get "general" "nftset_name")
-    if [ -z "$nftset_name" ]; then
-        echo "nftset_name not provided, skip.."
-        return
-    fi
-    cleanup_routetable
-
-    nft add table inet $_FWMARK_TABLE
-    nft add set inet $_FWMARK_TABLE "${nftset_name}_v4" { type ipv4_addr \; flags interval\; }
-    nft add set inet $_FWMARK_TABLE "${nftset_name}_v6"  { type ipv6_addr \; flags interval\; }
-    nft add chain inet $_FWMARK_TABLE mangle_prerouting { type filter hook prerouting priority -150 \; policy accept \; }
-    nft add chain inet $_FWMARK_TABLE mangle_output { type route hook output priority -150 \; policy accept \; }
-    nft add rule inet $_FWMARK_TABLE mangle_prerouting ip daddr "@${nftset_name}_v4" counter meta mark set 0x7
-    nft add rule inet $_FWMARK_TABLE mangle_output ip daddr "@${nftset_name}_v4" counter meta mark set 0x7
-    nft add rule inet $_FWMARK_TABLE mangle_prerouting ip6 daddr "@${nftset_name}_v6" counter meta mark set 0x7
-    nft add rule inet $_FWMARK_TABLE mangle_output ip6 daddr "@${nftset_name}_v6" counter meta mark set 0x7
-
-    interface=$(uci_get "general" "interface")
-    if [ -z "$interface" ] || [ "$interface" = "_nil_" ]; then
-        return
-    fi
-    ipaddr=$(ifconfig "$interface" | awk '/inet addr/{print substr($2,6)}')
-    ip6addr=$(ifconfig "$interface" | awk '/inet6 addr/{print substr($3,0)}')
-
-    routetable="${_ROUTETABLE_PREFIX}${interface}"
-    # ip route flush table "$routetable"
-    for num in $(seq 200 250); do  # table num: 0-255
-        if ! awk '{print $1}' < $_ROUTETABLE_FILE | grep -q "$num"; then
-            echo "$num $routetable" >> $_ROUTETABLE_FILE
-            break
-        fi
-    done
-    ip rule add fwmark 7 table "$routetable"
-    ip route add default dev "$interface" table "$routetable"
-
-    if [ -n "${ip6addr}" ]; then
-        ip -6 rule add fwmark 7 table "$routetable"
-        ip -6 route add default dev "$interface" table "$routetable"
-    fi
+validate_nftset_name() {
+    nftset_name=$(uci_get general nftset_name)
+    case "$nftset_name" in
+        ''|[!a-zA-Z_]*|*[!a-zA-Z0-9_]*) echo 'Invalid NFTset name'; return 1 ;;
+    esac
+    [ "${#nftset_name}" -le 48 ] || return 1
 }
 
 restart_dnsmasq() {
-    /etc/init.d/dnsmasq restart > /dev/null 2>&1
+    : > "$_RUNTIME_DIR/dnsmasq.pending" || return 1
+    "$_DNSMASQ_SERVICE" restart || return 1
+    rm -f "$_RUNTIME_DIR/dnsmasq.pending"
+}
+
+dnsmasq_signature() {
+    find "$_DNSMASQ_CONFD" -maxdepth 1 -type f -name 'vpn-nftset-*.conf' -exec md5sum {} \; | sort
+}
+
+generate_custom_conf() (
+    set -f
+    : > "$service_work/custom.txt"
+    : > "$service_work/dns.txt"
+    for custom_domain in $(uci_get dnsmasq_nftset domains); do
+        printf '%s\n' "$custom_domain" >> "$service_work/custom.txt"
+    done
+    for dns_server in $(uci_get dnsmasq_nftset dns_servers); do
+        printf '%s\n' "$dns_server" >> "$service_work/dns.txt"
+    done
+    custom_nftsets="4#inet#${_FWMARK_TABLE}#${nftset_name}_v4,6#inet#${_FWMARK_TABLE}#${nftset_name}_v6"
+    data_tool generate-custom "$service_work/custom.txt" "$service_work/dns.txt" \
+        "$custom_nftsets" "$service_work/custom.conf" || exit 1
+    if ! cmp -s "$service_work/custom.conf" "$_DNSMASQ_CONFD/vpn-nftset-domains.conf"; then
+        mv "$service_work/custom.conf" "$_DNSMASQ_CONFD/vpn-nftset-domains.conf" || exit 1
+    fi
+)
+
+run_domain_generator() (
+    set -f
+    set -- -d "$_DNSMASQ_CONFD" -c "$_CACHE_DIR" -r "$_RUNTIME_DIR" -n \
+        -i "4#inet#${_FWMARK_TABLE}#${nftset_name}_v4" \
+        -i "6#inet#${_FWMARK_TABLE}#${nftset_name}_v6"
+    if [ "$generator_mode" = offline ]; then
+        set -- "$@" -o
+    fi
+    for dns_server in $(uci_get dnsmasq_nftset dns_servers); do
+        set -- "$@" -s "$dns_server"
+    done
+    for source_url in $(uci_get dnsmasq_nftset gfwlist_urls); do
+        set -- "$@" -w "$source_url"
+    done
+    for source_url in $(uci_get dnsmasq_nftset domainslist_urls); do
+        set -- "$@" -u "$source_url"
+    done
+    VPN_NFTSET_CANCEL_FILE="$_RUNTIME_DIR/cancel-update" "$_GENERATOR" "$@"
+)
+
+update_crontab() {
+    mkdir -p "$(dirname "$_CRONTAB_FILE")" || return 1
+    [ -f "$_CRONTAB_FILE" ] || : > "$_CRONTAB_FILE"
+    awk '!/vpn-nftset-rulegenerator|vpn-nftset-update/' "$_CRONTAB_FILE" > "$service_work/crontab"
+    if [ "$cron_enabled" = 1 ]; then
+        printf '%s\n' '4 4 * * * /usr/bin/vpn-nftset-update' >> "$service_work/crontab"
+    fi
+    if ! cmp -s "$service_work/crontab" "$_CRONTAB_FILE"; then
+        cat "$service_work/crontab" > "$_CRONTAB_FILE" || return 1
+        if [ -x "$_CRON_SERVICE" ]; then
+            "$_CRON_SERVICE" restart || return 1
+        fi
+    fi
+}
+
+cleanup_route_entries() {
+    ip rule del fwmark 7 2>/dev/null || true
+    ip -6 rule del fwmark 7 2>/dev/null || true
+    if [ -f "$_ROUTETABLE_FILE" ]; then
+        awk -v prefix="$_ROUTETABLE_PREFIX" '$2 ~ "^" prefix { print $1 }' "$_ROUTETABLE_FILE" |
+            while IFS= read -r cleanup_route_id; do
+                ip route flush table "$cleanup_route_id" 2>/dev/null || true
+                ip -6 route flush table "$cleanup_route_id" 2>/dev/null || true
+            done
+        awk -v prefix="$_ROUTETABLE_PREFIX" '$2 !~ "^" prefix' "$_ROUTETABLE_FILE" > "$service_work/rt_tables"
+        cat "$service_work/rt_tables" > "$_ROUTETABLE_FILE"
+    fi
+}
+
+setup_routetable() {
+    : > "$service_work/table.nft"
+    if nft list table inet "$_FWMARK_TABLE" >/dev/null 2>&1; then
+        printf 'delete table inet %s\n' "$_FWMARK_TABLE" >> "$service_work/table.nft"
+    fi
+    cat >> "$service_work/table.nft" <<NFT
+add table inet $_FWMARK_TABLE
+add set inet $_FWMARK_TABLE ${nftset_name}_v4 { type ipv4_addr; flags interval; auto-merge; }
+add set inet $_FWMARK_TABLE ${nftset_name}_v6 { type ipv6_addr; flags interval; auto-merge; }
+add set inet $_FWMARK_TABLE ${nftset_name}_telegram_v4 { type ipv4_addr; flags interval; auto-merge; }
+add set inet $_FWMARK_TABLE ${nftset_name}_telegram_v6 { type ipv6_addr; flags interval; auto-merge; }
+add chain inet $_FWMARK_TABLE mangle_prerouting { type filter hook prerouting priority -150; policy accept; }
+add chain inet $_FWMARK_TABLE mangle_output { type route hook output priority -150; policy accept; }
+add rule inet $_FWMARK_TABLE mangle_prerouting ip daddr @${nftset_name}_v4 counter meta mark set 0x7
+add rule inet $_FWMARK_TABLE mangle_output ip daddr @${nftset_name}_v4 counter meta mark set 0x7
+add rule inet $_FWMARK_TABLE mangle_prerouting ip6 daddr @${nftset_name}_v6 counter meta mark set 0x7
+add rule inet $_FWMARK_TABLE mangle_output ip6 daddr @${nftset_name}_v6 counter meta mark set 0x7
+add rule inet $_FWMARK_TABLE mangle_prerouting ip daddr @${nftset_name}_telegram_v4 counter meta mark set 0x7
+add rule inet $_FWMARK_TABLE mangle_output ip daddr @${nftset_name}_telegram_v4 counter meta mark set 0x7
+add rule inet $_FWMARK_TABLE mangle_prerouting ip6 daddr @${nftset_name}_telegram_v6 counter meta mark set 0x7
+add rule inet $_FWMARK_TABLE mangle_output ip6 daddr @${nftset_name}_telegram_v6 counter meta mark set 0x7
+NFT
+    nft -f "$service_work/table.nft" || return 1
+    cleanup_route_entries
+    route_interface=$(uci_get general interface _nil_)
+    [ "$route_interface" != _nil_ ] && [ -n "$route_interface" ] || return 0
+    case "$route_interface" in
+        *[!a-zA-Z0-9_.:-]*) echo 'Invalid network interface'; return 1 ;;
+    esac
+    mkdir -p "$(dirname "$_ROUTETABLE_FILE")" || return 1
+    [ -f "$_ROUTETABLE_FILE" ] || : > "$_ROUTETABLE_FILE"
+    route_id=200
+    while [ "$route_id" -le 250 ]; do
+        if ! awk -v id="$route_id" '$1 == id { found=1 } END { exit !found }' "$_ROUTETABLE_FILE"; then
+            break
+        fi
+        route_id=$((route_id + 1))
+    done
+    [ "$route_id" -le 250 ] || { echo 'No free routing table'; return 1; }
+    printf '%s %s%s\n' "$route_id" "$_ROUTETABLE_PREFIX" "$route_interface" >> "$_ROUTETABLE_FILE"
+    ip route replace default dev "$route_interface" table "$route_id" || return 1
+    ip rule add fwmark 7 table "$route_id" || return 1
+    if ip -6 addr show dev "$route_interface" scope global | awk '/inet6/ { found=1 } END { exit !found }'; then
+        ip -6 route replace default dev "$route_interface" table "$route_id" || return 1
+        ip -6 rule add fwmark 7 table "$route_id" || return 1
+    fi
+}
+
+nftset_add_addresses() (
+    set -f
+    for custom_ip in $(uci_get general ip_addresses); do
+        case "$custom_ip" in
+            *[!a-fA-F0-9:./]*) echo 'Invalid custom IP address'; exit 1 ;;
+            *:*) custom_family=v6 ;;
+            *) custom_family=v4 ;;
+        esac
+        nft add element inet "$_FWMARK_TABLE" "${nftset_name}_${custom_family}" "{ $custom_ip }" || exit 1
+    done
+)
+
+telegram_status() {
+    printf '%s\n' "$1" > "$service_work/telegram.status"
+    mv "$service_work/telegram.status" "$_RUNTIME_DIR/telegram.status"
+}
+
+apply_telegram_cached() {
+    uci_get_bool general telegram_enabled 1 || return 0
+    telegram_input="$_CACHE_DIR/telegram.cidr"
+    [ -f "$telegram_input" ] || telegram_input=$_TELEGRAM_SEED
+    if ! data_tool parse-cidrs "$telegram_input" "$service_work/telegram.cidr"; then
+        telegram_status invalid_data
+        data_tool parse-cidrs "$_TELEGRAM_SEED" "$service_work/telegram.cidr" || return 1
+    fi
+    data_tool generate-telegram "$service_work/telegram.cidr" "$nftset_name" \
+        "$_FWMARK_TABLE" "$service_work/telegram.nft" || return 1
+    if ! nft -f "$service_work/telegram.nft"; then
+        telegram_status apply_failed
+        return 1
+    fi
+}
+
+refresh_telegram() {
+    [ ! -e "$_RUNTIME_DIR/cancel-update" ] || return 1
+    if ! uci_get_bool general telegram_enabled 1; then
+        printf 'flush set inet %s %s_telegram_v4\nflush set inet %s %s_telegram_v6\n' \
+            "$_FWMARK_TABLE" "$nftset_name" "$_FWMARK_TABLE" "$nftset_name" > "$service_work/telegram.nft"
+        nft -f "$service_work/telegram.nft"
+        return $?
+    fi
+    telegram_url=https://core.telegram.org/resources/cidr.txt
+    telegram_download_result=0
+    if command -v curl >/dev/null 2>&1; then
+        curl -f -s -S -L --connect-timeout 10 --max-time 30 "$telegram_url" -o "$service_work/telegram.raw" || telegram_download_result=1
+    elif command -v uclient-fetch >/dev/null 2>&1; then
+        uclient-fetch -q -T 30 "$telegram_url" -O "$service_work/telegram.raw" || telegram_download_result=1
+    else
+        wget -q -T 30 -t 1 "$telegram_url" -O "$service_work/telegram.raw" || telegram_download_result=1
+    fi
+    [ ! -e "$_RUNTIME_DIR/cancel-update" ] || return 1
+    if [ "$telegram_download_result" -ne 0 ]; then
+        telegram_status download_failed
+        return 1
+    fi
+    if ! data_tool parse-cidrs "$service_work/telegram.raw" "$service_work/telegram.cidr"; then
+        telegram_status invalid_data
+        return 1
+    fi
+    [ ! -e "$_RUNTIME_DIR/cancel-update" ] || return 1
+    if ! data_tool generate-telegram "$service_work/telegram.cidr" "$nftset_name" \
+        "$_FWMARK_TABLE" "$service_work/telegram.nft" || ! nft -f "$service_work/telegram.nft"; then
+        telegram_status apply_failed
+        return 1
+    fi
+    if ! cmp -s "$service_work/telegram.cidr" "$_CACHE_DIR/telegram.cidr"; then
+        telegram_cache_candidate=$(mktemp "$_CACHE_DIR/telegram.cidr.XXXXXX") || {
+            telegram_status cache_failed
+            return 1
+        }
+        if ! cp "$service_work/telegram.cidr" "$telegram_cache_candidate" || \
+            ! mv "$telegram_cache_candidate" "$_CACHE_DIR/telegram.cidr"; then
+            rm -f "$telegram_cache_candidate"
+            telegram_status cache_failed
+            return 1
+        fi
+    fi
+    telegram_success_candidate=$(mktemp "$_CACHE_DIR/telegram.success.XXXXXX") || {
+        telegram_status cache_failed
+        return 1
+    }
+    if ! date +%s > "$telegram_success_candidate" || \
+        ! mv "$telegram_success_candidate" "$_CACHE_DIR/telegram.success"; then
+        rm -f "$telegram_success_candidate"
+        telegram_status cache_failed
+        return 1
+    fi
+    telegram_status ok
 }
 
 cleanup() {
-    cleanup_routetable
-    cleanup_crontab
-    if ls "$_DNSMASQ_CONFD"/vpn-nftset-*.conf > /dev/null 2>&1; then
-        rm -rf "$_DNSMASQ_CONFD"/vpn-nftset-*.conf
+    nft delete table inet "$_FWMARK_TABLE" 2>/dev/null || true
+    cleanup_route_entries
+    cron_enabled=0
+    update_crontab || return 1
+    cleanup_signature=$(dnsmasq_signature)
+    find "$_DNSMASQ_CONFD" -maxdepth 1 -type f -name 'vpn-nftset-*.conf' -exec rm -f {} \;
+    if [ -n "$cleanup_signature" ] || [ -e "$_RUNTIME_DIR/dnsmasq.pending" ]; then
         restart_dnsmasq
     fi
 }
 
+start_locked() {
+    if ! uci_get_bool general enabled 0; then
+        cleanup
+        return $?
+    fi
+    validate_nftset_name || return 1
+    generate_custom_conf || return 1
+    setup_routetable || return 1
+    nftset_add_addresses || return 1
+    generator_mode=offline
+    run_domain_generator || return 1
+    apply_telegram_cached || return 1
+    restart_dnsmasq || return 1
+    cron_enabled=0
+    if uci_get_bool dnsmasq_nftset auto_update 1; then
+        cron_enabled=1
+    fi
+    update_crontab
+}
+
+update_locked() {
+    uci_get_bool general enabled 0 || { echo 'VPN NFTset is disabled'; return 1; }
+    validate_nftset_name || return 1
+    nft list table inet "$_FWMARK_TABLE" >/dev/null 2>&1 || {
+        echo 'VPN NFTset is not running'
+        return 1
+    }
+    update_before=$(dnsmasq_signature)
+    update_result=0
+    generator_mode=online
+    run_domain_generator || update_result=1
+    [ ! -e "$_RUNTIME_DIR/cancel-update" ] || return 1
+    update_after=$(dnsmasq_signature)
+    if [ "$update_before" != "$update_after" ] || [ -e "$_RUNTIME_DIR/dnsmasq.pending" ]; then
+        restart_dnsmasq || update_result=1
+    fi
+    refresh_telegram || update_result=1
+    return "$update_result"
+}
 
 start() {
-    # config_load "$CONFIG_NAME"
-    if ! uci_get_bool "general" "enabled"; then
-        echo "Not enabled, skip.."
-        cleanup
-        return
+    with_service_lock wait start_locked || return 1
+    if uci_get_bool general enabled 0 && uci_get_bool dnsmasq_nftset auto_update 1; then
+        "$_UPDATER" > "$_RUNTIME_DIR/refresh.log" 2>&1 &
     fi
-
-    if generate_dnsmasq_conf "$_DNSMASQ_CONFD"/vpn-nftset-domains.conf > /dev/null 2>&1; then
-        restart_dnsmasq
-    fi
-
-    setup_crontab
-    setup_routetable
-    nftset_add_addresses
 }
 
 stop() {
-    # config_load "$CONFIG_NAME"
-    cleanup
+    with_service_lock wait cleanup
 }
 
 reload() {
     start
 }
 
+update() {
+    with_service_lock fail update_locked
+}
+
 delayed_reload() {
-    # FIXME(damnever): dirty fix, see files/luci/model/cbi/vpn-nftset.lua
     (sleep 10 && reload >/dev/null 2>&1) &
 }

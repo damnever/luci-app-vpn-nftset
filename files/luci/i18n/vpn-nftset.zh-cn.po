@@ -1,62 +1,350 @@
 msgid ""
 msgstr "Content-Type: text/plain; charset=UTF-8\n"
 
-msgid "Enable"
-msgstr "启用"
+msgid "A domain also covers its subdomains. Custom rules stay available when subscriptions fail."
+msgstr "父域名同时匹配其子域名；订阅失败时，自定义规则仍然有效。"
 
-msgid "{name}_v4 and {name}_v6 will be created for IPv4 and IPv6."
-msgstr "将会创建 {name}_v4, {name}_v6 分别用于 IPv4 和 IPv6."
+msgid "Actions"
+msgstr "操作"
+
+msgid "Add domain"
+msgstr "添加域名"
+
+msgid "Advanced"
+msgstr "高级设置"
+
+msgid "All sources"
+msgstr "全部来源"
+
+msgid "Already in your custom list."
+msgstr "自定义列表中已有此域名。"
+
+msgid "Also downloaded"
+msgstr "下载列表也包含"
+
+msgid "An update is already running."
+msgstr "已有更新正在运行。"
+
+msgid "Automatic updates off"
+msgstr "自动更新已关闭"
+
+msgid "Base64-encoded GFWList subscriptions."
+msgstr "Base64 编码的 GFWList 列表。"
+
+msgid "Bundled fallback"
+msgstr "使用内置列表"
+
+msgid "Contains downloaded subdomains. You can keep it as a stable custom rule."
+msgstr "下载列表已包含其子域名，仍可添加为稳定的自定义规则。"
+
+msgid "Could not apply rules"
+msgstr "规则应用失败"
+
+msgid "Could not load lists. Try again."
+msgstr "列表加载失败，请重试。"
+
+msgid "Could not start the update."
+msgstr "无法启动更新。"
+
+msgid "Covered by"
+msgstr "已由父域名覆盖："
+
+msgid "Custom"
+msgstr "自定义"
+
+msgid "Custom coverage"
+msgstr "自定义规则"
+
+msgid "Custom domains"
+msgstr "自定义域名"
+
+msgid "DNS"
+msgstr "DNS"
+
+msgid "DNS port must be between 1 and 65535"
+msgstr "DNS 端口范围为 1 到 65535"
+
+msgid "DNS server must be text"
+msgstr "DNS 地址必须为文本"
+
+msgid "DNS servers"
+msgstr "DNS 服务器"
+
+msgid "Daily at 04:04"
+msgstr "每天 04:04 更新"
+
+msgid "Default DNS"
+msgstr "默认 DNS"
+
+msgid "Disabled"
+msgstr "已停用"
+
+msgid "Domain"
+msgstr "域名"
+
+msgid "Domain list"
+msgstr "域名列表"
+
+msgid "Domain list sources"
+msgstr "域名列表订阅地址"
+
+msgid "Domain must be text"
+msgstr "域名必须为文本"
+
+msgid "Domain to add"
+msgstr "要添加的域名"
+
+msgid "Domains"
+msgstr "域名"
+
+msgid "Download failed"
+msgstr "下载失败"
+
+msgid "Downloaded domains"
+msgstr "下载域名"
+
+msgid "Enable JavaScript to search and manage domain lists."
+msgstr "启用 JavaScript 后可搜索和管理域名列表。"
+
+msgid "Enable VPN rules"
+msgstr "启用 VPN 规则"
+
+msgid "Enabled"
+msgstr "已启用"
+
+msgid "Enter a complete domain such as example.com"
+msgstr "请填写完整域名，例如 example.com"
+
+msgid "Enter a domain such as example.com."
+msgstr "请填写域名，例如 example.com。"
+
+msgid "Enter a domain, not an IP address"
+msgstr "请填写域名，而不是 IP 地址"
+
+msgid "Enter an HTTP or HTTPS URL without spaces."
+msgstr "请填写不含空格的 HTTP 或 HTTPS 地址。"
+
+msgid "Enter valid IPv4, IPv6 or CIDR ranges."
+msgstr "请填写有效的 IPv4、IPv6 地址或 CIDR 网段。"
+
+msgid "Filter by source"
+msgstr "按来源筛选"
+
+msgid "GFWList"
+msgstr "GFWList"
+
+msgid "GFWList sources"
+msgstr "GFWList 订阅地址"
+
+msgid "IP address or hostname, optionally followed by #port. Leave empty to use your normal DNS."
+msgstr "填写 IP 地址或主机名，可附加 #端口。留空则使用常规 DNS。"
+
+msgid "IP ranges"
+msgstr "个网段"
+
+msgid "IPv4 and IPv6 sets use the suffixes _v4 and _v6."
+msgstr "IPv4 和 IPv6 集合分别使用 _v4 和 _v6 后缀。"
+
+msgid "IPv4, IPv6 or CIDR ranges. These are kept independently of subscriptions."
+msgstr "支持 IPv4、IPv6 和 CIDR 网段，独立于订阅保存。"
+
+msgid "Included in a downloaded list. You can keep it as a stable custom rule."
+msgstr "下载列表已包含此域名，仍可添加为稳定的自定义规则。"
+
+msgid "Insufficient permissions to read UCI configuration."
+msgstr "没有读取配置的权限。"
+
+msgid "Invalid custom domain on line %d: %s"
+msgstr "第 %d 行自定义域名无效：%s"
+
+msgid "Invalid domain label"
+msgstr "域名格式无效"
+
+msgid "Invalid downloaded data"
+msgstr "下载内容无效"
+
+msgid "Last success"
+msgstr "上次成功"
+
+msgid "Loading…"
+msgstr "正在加载…"
+
+msgid "Manual IP addresses"
+msgstr "手动 IP 地址"
+
+msgid "NFTset name"
+msgstr "NFTset 名称"
+
+msgid "Never"
+msgstr "暂无"
+
+msgid "Next"
+msgstr "下一页"
+
+msgid "No custom domains yet."
+msgstr "还没有自定义域名。"
+
+msgid "No downloaded domains yet. Enable the rules and update subscriptions."
+msgstr "暂无下载域名，请启用规则并更新订阅。"
+
+msgid "No matching domains."
+msgstr "没有匹配的域名。"
+
+msgid "Not downloaded"
+msgstr "尚未下载"
+
+msgid "One domain per line."
+msgstr "每行一个域名。"
+
+msgid "Only populate NFTsets"
+msgstr "仅填充 NFTset"
+
+msgid "Page"
+msgstr "第"
+
+msgid "Please correct the highlighted settings before saving."
+msgstr "请先修正标出的配置，再保存。"
+
+msgid "Previous"
+msgstr "上一页"
+
+msgid "Remove"
+msgstr "移除"
+
+msgid "Remove custom domain"
+msgstr "移除自定义域名"
+
+msgid "Retry"
+msgstr "重试"
+
+msgid "Update cancelled."
+msgstr "更新已取消。"
+
+msgid "Permission denied."
+msgstr "没有执行此操作的权限。"
+
+msgid "Save and apply your settings before updating."
+msgstr "请先保存并应用配置，再更新订阅。"
+
+msgid "Use an IP address or hostname DNS server, optionally followed by #port"
+msgstr "请填写 DNS IP 地址或主机名，可附加 #端口"
+
+msgid "8.8.8.8 or 91.108.56.0/22"
+msgstr "8.8.8.8 或 91.108.56.0/22"
+
+msgid "example.com or example.com/ns#5353"
+msgstr "example.com 或 example.com/ns#5353"
+
+msgid "Routing & DNS"
+msgstr "路由与 DNS"
+
+msgid "Rules applied; could not save cache"
+msgstr "规则已应用，更新状态保存失败"
+
+msgid "Save and apply the enabled setting before updating."
+msgstr "请先启用规则并保存应用，再更新订阅。"
+
+msgid "Search custom domains"
+msgstr "搜索自定义域名"
+
+msgid "Search downloaded domains"
+msgstr "搜索下载域名"
+
+msgid "Search every domain from your subscriptions, including domains covered by custom rules."
+msgstr "可搜索所有订阅域名，包括已由自定义规则覆盖的域名。"
+
+msgid "Settings"
+msgstr "配置"
+
+msgid "Showing"
+msgstr "显示"
+
+msgid "Source"
+msgstr "来源"
+
+msgid "Stable rules you manage"
+msgstr "独立保存，持续生效"
+
+msgid "Subscription status"
+msgstr "订阅状态"
+
+msgid "Subscriptions"
+msgstr "订阅"
+
+msgid "Telegram IP ranges"
+msgstr "Telegram IP 网段"
+
+msgid "Telegram IP subscription"
+msgstr "Telegram IP 订阅"
+
+msgid "This status reflects saved subscriptions. Apply source changes before updating."
+msgstr "此处显示已保存的订阅。修改地址后，请先保存应用再更新。"
+
+msgid "Unique domains across sources"
+msgstr "订阅域名去重后总数"
+
+msgid "Unsaved changes"
+msgstr "有未保存的更改"
+
+msgid "Up to date"
+msgstr "更新成功"
+
+msgid "Update complete"
+msgstr "更新完成"
+
+msgid "Update finished with errors. Cached lists remain available."
+msgstr "部分更新失败，仍保留上次可用列表。"
+
+msgid "Update now"
+msgstr "立即更新"
+
+msgid "Automatic updates"
+msgstr "自动更新订阅"
+
+msgid "Updates at startup and daily at 04:04. Failed downloads keep the last working list."
+msgstr "启动时及每天 04:04 更新；下载失败时保留上次可用列表。"
+
+msgid "At startup and daily 04:04"
+msgstr "启动时及每日 04:04"
+
+msgid "Cached list retained"
+msgstr "已保留上次列表"
+
+msgid "Updating…"
+msgstr "正在更新…"
+
+msgid "Use a domain without a URL, path, or wildcard"
+msgstr "请填写域名，不含协议、路径或通配符"
+
+msgid "Use an IP address or hostname for DNS, optionally followed by #port"
+msgstr "请填写 DNS IP 地址或主机名，可附加 #端口"
+
+msgid "Use domain or domain/DNS-server"
+msgstr "请使用 域名 或 域名/DNS地址 格式"
+
+msgid "Use domain or domain/IP#port."
+msgstr "请使用 域名 或 域名/IP#端口 格式。"
+
+msgid "Use letters, digits and underscores; start with a letter or underscore (48 characters maximum)."
+msgstr "仅支持字母、数字和下划线，以字母或下划线开头，最多 48 个字符。"
+
+msgid "Uses Telegram's official IP ranges, with a bundled fallback for the first run."
+msgstr "使用 Telegram 官方 IP 网段，首次更新前使用内置列表。"
+
+msgid "Using cached list"
+msgstr "使用上次列表"
 
 msgid "VPN NFTset"
 msgstr "VPN NFTset"
 
-msgid "NFTset based VPN rules (with dnsmasq support)."
-msgstr "配置管理基于 NFTset 的 VPN 路由规则（支持 dnsmasq）"
+msgid "VPN ROUTING"
+msgstr "规则与订阅"
 
-msgid "Basic Settings"
-msgstr "基本设置"
+msgid "VPN interface"
+msgstr "VPN 接口"
 
-msgid "e.g. 127.0.0.1#5300 or ::1#5300 (port is not required)."
-msgstr "比如 127.0.0.1#5300 或者 ::1#5300 (端口号 53 可省略)"
+msgid "domains"
+msgstr "个域名"
 
-msgid "NFTset Name"
-msgstr "NFTset 名字"
-
-msgid "Network Interface"
-msgstr "网络接口"
-
-msgid "Routing traffic to this interface by using iproute2 and iptables."
-msgstr "通过 iproute2 和 iptables 将流量路由到此网络接口"
-
-msgid "IP Addresses"
-msgstr "IP 地址列表"
-
-msgid "Adding the above IP addresses into NFTset."
-msgstr "将以上 IP 地址加入 NFTset"
-
-msgid "DNSMASQ NFTset Settings"
-msgstr "DNSMASQ NFTset 配置"
-
-msgid "Auto-update from provided URLs at 04:04 every day."
-msgstr "每天 04:04 会自动检查提供的 URL 并更新"
-
-msgid "DNS servers"
-msgstr "DNS 服务器列表"
-
-msgid "Domains"
-msgstr "域名列表"
-
-msgid "Adding above domains to ipset, a custom nameserver could be added like this 'e.g/ns#5353'."
-msgstr "以上域名将会添加进 ipset，可以像这样添加一个额外的 nameserver：'e.g/ns#5353'"
-
-msgid "GFWList URLs"
-msgstr "GFWList 格式的 URL 列表"
-
-msgid "Domains URLs"
-msgstr "通用格式的 URL 列表"
-
-msgid "Format: one domain per line"
-msgstr "通用格式：每行一个域名"
-
-msgid "Disable"
-msgstr "停用"
+msgid "of"
+msgstr "共"
