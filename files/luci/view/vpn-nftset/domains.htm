@@ -1,0 +1,15 @@
+<%+cbi/valueheader%>
+<div class="vpn-custom-editor" data-role="custom-editor">
+    <textarea class="cbi-input-textarea vpn-custom-value" name="<%=cbid%>" id="<%=cbid%>" rows="8"><%=pcdata(self:cfgvalue(section) or '')%></textarea>
+    <div class="vpn-custom-controls" hidden>
+        <div class="vpn-add-row"><input type="text" data-role="custom-entry" placeholder="<%:example.com or example.com/ns#5353%>" aria-label="<%:Domain to add%>" autocomplete="off" spellcheck="false" />
+            <button type="button" class="btn cbi-button cbi-button-add" data-action="add-custom"><%:Add domain%></button></div>
+        <p class="vpn-help"><%:A domain also covers its subdomains. Custom rules stay available when subscriptions fail.%></p>
+        <div data-role="custom-feedback" class="vpn-feedback" role="status" aria-live="polite" hidden></div>
+        <div class="vpn-list-toolbar"><input type="search" data-role="custom-search" placeholder="<%:Search custom domains%>" aria-label="<%:Search custom domains%>" />
+            <span class="vpn-list-count" data-role="custom-results"></span></div>
+        <div class="vpn-table-wrap"><table class="vpn-table"><thead><tr><th><%:Domain%></th><th><%:DNS%></th><th class="vpn-action-column"><%:Actions%></th></tr></thead><tbody data-role="custom-rows"></tbody></table></div>
+        <div class="vpn-pagination"><span data-role="custom-page"></span><div><button type="button" class="btn" data-action="custom-prev"><%:Previous%></button><button type="button" class="btn" data-action="custom-next"><%:Next%></button></div></div>
+    </div>
+</div>
+<%+cbi/valuefooter%>

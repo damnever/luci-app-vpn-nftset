@@ -1,0 +1,59 @@
+#!/usr/bin/lua
+
+local data = require("vpn_nftset")
+local operation = arg[1]
+local input_path = operation == "parse-domains" and arg[3] or arg[2]
+local output_path = operation == "parse-domains" and arg[4] or (operation == "generate-telegram" or operation == "generate-custom") and arg[5] or arg[3]
+
+local function fail(message)
+    io.stderr:write(message .. "\n")
+    os.exit(1)
+end
+
+if not input_path or not output_path then
+    fail("Usage: vpn-nftset-data parse-domains <gfw|plain> <input> <output> | parse-cidrs <input> <output> | generate-telegram <input> <name> <table> <output> | generate-custom <custom-input> <DNS-input> <nftsets> <output>")
+end
+local input, err = io.open(input_path, "rb")
+if not input then fail(err) end
+local text = input:read("*a")
+input:close()
+local result
+if operation == "parse-domains" then
+    local domains, skipped
+    domains, err, skipped = data.parse_domains(text, arg[2])
+    if domains then
+        result = table.concat(domains, "\n") .. "\n"
+        if skipped > 0 then
+            io.stderr:write("Skipped " .. skipped .. " unsupported wildcard domain(s)\n")
+        end
+    end
+elseif operation == "parse-cidrs" then
+    local cidrs
+    cidrs, err = data.parse_cidrs(text)
+    if cidrs then
+        local lines = {}
+        for _, address in ipairs(cidrs.v4) do lines[#lines + 1] = address end
+        for _, address in ipairs(cidrs.v6) do lines[#lines + 1] = address end
+        result = table.concat(lines, "\n") .. "\n"
+    end
+elseif operation == "generate-telegram" then
+    result, err = data.generate_telegram(text, arg[3], arg[4])
+elseif operation == "generate-custom" then
+    local dns_input
+    dns_input, err = io.open(arg[3], "rb")
+    if not dns_input then fail(err) end
+    local dns_text = dns_input:read("*a")
+    dns_input:close()
+    result, err = data.generate_custom(text, dns_text, arg[4])
+else
+    fail("Unknown operation: " .. tostring(operation))
+end
+if not result then fail(err) end
+local output
+output, err = io.open(output_path, "wb")
+if not output then fail(err) end
+local ok
+ok, err = output:write(result)
+local closed, close_err = output:close()
+if not ok then fail(err) end
+if not closed then fail(close_err) end

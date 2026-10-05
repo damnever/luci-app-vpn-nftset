@@ -1,0 +1,4 @@
+#!/bin/sh
+
+# Kept as a fixed command for cron and the LuCI refresh action.
+exec "${VPN_NFTSET_SERVICE_PATH:-/etc/init.d/vpn-nftset}" update

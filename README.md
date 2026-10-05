@@ -1,20 +1,37 @@
-dnsmasq-full could be optional, but it is required :D.
-You may need to configure the firewall and other things as well.
+# LuCI VPN NFTset
 
-Refer to [this old branch](https://github.com/damnever/luci-app-vpn-nftset/tree/iptables) for iptables support.
+Manage domain and IP rules for VPN routing on OpenWrt using dnsmasq and nftables.
+Configure the VPN interface and firewall forwarding before use. Requires
+`dnsmasq-full` with nftset support; Lua LuCI pages require `luci-compat`, which is
+declared as a package dependency.
 
+For iptables support, see the
+[old branch](https://github.com/damnever/luci-app-vpn-nftset/tree/iptables).
+
+## Build
+
+With Docker running, build using the OpenWrt 23.05.5 SDK for MediaTek MT7623:
+
+```sh
+./scripts/build-docker.sh
 ```
-cd openwrt-sdk-*
-git clone https://github.com/damnever/luci-app-vpn-nftset.git package/luci-app-vpn-nftset
 
-# Compile po2lmo if not exist.
-pushd package/luci-app-vpn-nftset/tools/po2lmo
-make && sudo make install
-popd
+The script pulls `docker.io/openwrt/sdk:mediatek-mt7623-v23.05.5` and writes the
+validated package to `bin/luci-app-vpn-nftset_*_all.ipk`.
 
-make menuconfig    # Select: LuCI -> 3. Applications
-make package/luci-app-vpn-nftset/compile V=99
+Copy the package to the router, then install it with the configured OpenWrt feeds:
+
+```sh
+opkg update
+opkg install /tmp/luci-app-vpn-nftset_*_all.ipk
 ```
 
-TODO:
-- [ ] trancate parsed domains? (e.g. avatars0.githubusercontent.com -> githubusercontent.com).
+## Test
+
+With Lua 5.1 or LuaJIT, Python 3, Node.js 18+ and curl installed:
+
+```sh
+./tests/run.sh
+```
+
+GitHub Actions runs the tests on pushes and pull requests.

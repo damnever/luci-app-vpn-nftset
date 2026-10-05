@@ -142,3 +142,7 @@ luac.out
 
 
 tools/po2lmo/src/po2lmo
+
+__pycache__/
+
+/bin/

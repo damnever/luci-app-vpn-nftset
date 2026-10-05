@@ -1,0 +1,62 @@
+name: Test and build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      VPN_NFTSET_LUA: /usr/bin/lua5.1
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lua5.1 python3 curl
+      - name: Run tests
+        run: ./tests/run.sh
+
+  build:
+    if: ${{ false }} # Temporarily disable SDK builds; keep tests running.
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: feed/luci-app-vpn-nftset
+      - name: Prepare output directories
+        run: mkdir -p artifacts "$RUNNER_TEMP/vpn-nftset-ipk"
+      - name: Build OpenWrt package
+        uses: openwrt/gh-action-sdk@main
+        env:
+          CONTAINER: docker.io/openwrt/sdk
+          ARCH: mediatek-mt7623-v23.05.5
+          PACKAGES: luci-app-vpn-nftset
+          FEED_DIR: ${{ github.workspace }}/feed
+          ARTIFACTS_DIR: ${{ github.workspace }}/artifacts
+          V: s
+      - name: Validate installable package
+        run: |
+          python3 feed/luci-app-vpn-nftset/scripts/validate-ipk.py \
+            artifacts/bin "$RUNNER_TEMP/vpn-nftset-ipk"
+      - name: Upload installable package
+        uses: actions/upload-artifact@v7
+        with:
+          name: luci-app-vpn-nftset
+          path: ${{ runner.temp }}/vpn-nftset-ipk/luci-app-vpn-nftset_*_all.ipk
+          if-no-files-found: error

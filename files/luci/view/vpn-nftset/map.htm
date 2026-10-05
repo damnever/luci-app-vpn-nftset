@@ -1,0 +1,55 @@
+<% if firstmap and messages then for _, message in ipairs(messages) do %>
+<div class="alert-message warning"><%=pcdata(message)%></div>
+<% end end %>
+<% if readable ~= false then %>
+<link rel="stylesheet" href="<%=resource%>/vpn-nftset.css" />
+<div class="cbi-map vpn-app" id="cbi-<%=self.config%>" data-readonly="<%=writable == false and 'true' or 'false'%>"
+    data-catalog-url="<%=url('admin','services','vpn-nftset','catalog')%>"
+    data-refresh-url="<%=url('admin','services','vpn-nftset','refresh')%>"
+    data-token="<%=pcdata(token)%>">
+    <div class="vpn-heading">
+        <div><span class="vpn-eyebrow"><%:VPN ROUTING%></span><h2><%=pcdata(self.title)%></h2></div>
+        <div class="vpn-heading-actions">
+            <div class="vpn-enable"><% for _, section in ipairs(self.vpn_enabled.section:cfgsections()) do self.vpn_enabled:render(section) end %></div>
+            <span class="vpn-badge" data-role="service-state"><%:Loading…%></span>
+            <button type="button" class="btn cbi-button cbi-button-action vpn-update" data-action="refresh" disabled><%:Update now%></button></div>
+    </div>
+    <div class="vpn-notice" data-role="notice" role="status" aria-live="polite" hidden><span data-role="notice-message"></span><button type="button" class="btn" data-action="retry" hidden><%:Retry%></button></div>
+    <div class="vpn-stats">
+        <div class="vpn-stat"><span><%:Custom domains%></span><strong data-role="custom-count">—</strong><small data-role="custom-state"><%:Stable rules you manage%></small></div>
+        <div class="vpn-stat"><span><%:Downloaded domains%></span><strong data-role="downloaded-count">—</strong><small><%:Unique domains across sources%></small></div>
+        <div class="vpn-stat"><span><%:Telegram IP ranges%></span><strong data-role="telegram-count">—</strong><small data-role="telegram-state">—</small></div>
+    </div>
+    <nav class="vpn-tabs" role="tablist" aria-label="<%:Settings%>">
+        <% for index, group in ipairs(self.vpn_groups) do %>
+        <button type="button" role="tab" id="vpn-tab-<%=group.id%>" aria-controls="vpn-panel-<%=group.id%>" aria-selected="<%=index == 1 and 'true' or 'false'%>" data-tab="<%=group.id%>"<%=ifattr(index ~= 1, 'tabindex', '-1')%>><%=pcdata(group.title)%></button>
+        <% end %>
+    </nav>
+    <% for _, group in ipairs(self.vpn_groups) do %>
+    <section class="vpn-panel" id="vpn-panel-<%=group.id%>" role="tabpanel" aria-labelledby="vpn-tab-<%=group.id%>" data-panel="<%=group.id%>">
+        <% for _, field in ipairs(group.options) do for _, section in ipairs(field.section:cfgsections()) do field:render(section) end end %>
+        <% if group.id == 'domains' then %><%+vpn-nftset/downloaded%><% end %>
+        <% if group.id == 'subscriptions' then %><%+vpn-nftset/sources%><% end %>
+    </section>
+    <% end %>
+    <% if not self.save then %><div class="cbi-section-error"><%:Please correct the highlighted settings before saving.%></div><% end %>
+    <noscript><p><%:Enable JavaScript to search and manage domain lists.%></p></noscript>
+    <div hidden data-role="translations">
+        <% local labels = {
+            'Enabled', 'Disabled', 'Updating…', 'Update complete', 'Update finished with errors. Cached lists remain available.',
+            'Could not load lists. Try again.', 'Could not start the update.', 'Save and apply the enabled setting before updating.', 'Save and apply your settings before updating.',
+            'An update is already running.', 'Update cancelled.', 'Permission denied.', 'Custom', 'Default DNS', 'Remove', 'No custom domains yet.', 'No matching domains.',
+            'No downloaded domains yet. Enable the rules and update subscriptions.', 'Already in your custom list.',
+            'Enter a domain such as example.com.', 'Use domain or domain/IP#port.', 'Use an IP address or hostname for DNS, optionally followed by #port',
+            'Unsaved changes', 'Stable rules you manage', 'Included in a downloaded list. You can keep it as a stable custom rule.',
+            'Covered by', 'Contains downloaded subdomains. You can keep it as a stable custom rule.', 'Also downloaded',
+            'GFWList', 'Domain list', 'Not downloaded', 'Using cached list', 'Download failed', 'Invalid downloaded data',
+            'Could not apply rules', 'Rules applied; could not save cache', 'Up to date', 'Bundled fallback', 'Never', 'Last success', 'domains', 'IP ranges',
+            'Showing', 'of', 'Page', 'Previous', 'Next', 'At startup and daily 04:04', 'Automatic updates off', 'Remove custom domain', 'Cached list retained'
+        }; for _, label in ipairs(labels) do %>
+        <span data-key="<%=pcdata(label)%>"><%=pcdata(translate(label))%></span>
+        <% end %>
+    </div>
+</div>
+<script src="<%=resource%>/vpn-nftset.js" defer></script>
+<% else %><div class="alert-message warning"><%:Insufficient permissions to read UCI configuration.%></div><% end %>
